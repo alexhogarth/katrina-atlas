@@ -1,0 +1,287 @@
+@inject LocationStore Store
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="atlas @(panelOpen ? "panel-open" : "panel-closed")">
+    <WorldMap @ref="map"
+              Locations="locations"
+              Draft="draft"
+              Theme="theme"
+              Settings="mapSettings"
+              PickMode="pickMode"
+              SelectedId="selectedId"
+              IsLoaded="loaded"
+              ObstructionSelector=".atlas-panel"
+              OnMapClick="HandleMapClickAsync"
+              OnDraftMoved="HandleDraftMovedAsync"
+              OnMarkerClick="HandleMarkerClickAsync" />
+
+    <MapSettingsMenu Settings="mapSettings" OnChanged="SaveMapSettingsAsync" />
+
+    <button type="button" class="atlas-panel-toggle" @onclick="TogglePanel"
+            aria-label="@(panelOpen ? "Hide places panel" : "Show places panel")" aria-expanded="@panelOpen">
+        @(panelOpen ? "›" : "‹")
+    </button>
+
+    @if (pickMode)
+    {
+        <div class="atlas-pick-banner" role="status">
+            Click anywhere on the map to drop the pin
+            <button type="button" @onclick="() => pickMode = false">Cancel</button>
+        </div>
+    }
+
+    <aside class="atlas-panel" aria-label="Places">
+        <header class="atlas-panel-header">
+            <div class="atlas-brand">
+                <span class="atlas-brand-mark"><MarkerPreview Style="brandStyle" IdPrefix="brand" /></span>
+                <div>
+                    <h1>Katrina's Atlas</h1>
+                    <p>@Summary</p>
+                </div>
+            </div>
+            <div class="atlas-theme-switch" role="radiogroup" aria-label="Theme">
+                @foreach (var (value, icon, label) in Themes)
+                {
+                    <button type="button" role="radio" aria-checked="@(theme == value)" title="@label"
+                            class="@(theme == value ? "active" : null)" @onclick="() => SetThemeAsync(value)">
+                        @icon
+                    </button>
+                }
+            </div>
+        </header>
+
+        <div class="atlas-panel-body">
+            @if (!loaded)
+            {
+                <p class="atlas-hint p-3">Loading your places…</p>
+            }
+            else if (draft is not null)
+            {
+                <LocationEditor @ref="editor"
+                                @key="draft"
+                                Draft="draft"
+                                LabelsHidden="!mapSettings.ShowPlaceLabels"
+                                @bind-PickMode="pickMode"
+                                OnChanged="StateHasChanged"
+                                OnFlyTo="FlyToAsync"
+                                OnSave="SaveDraftAsync"
+                                OnCancel="CancelDraft"
+                                OnDelete="DeleteDraftAsync" />
+            }
+            else
+            {
+                <div class="atlas-list-actions">
+                    <button type="button" class="btn atlas-btn-primary w-100" @onclick="StartAdd">＋ Add a place</button>
+                    @if (locations.Count > 1)
+                    {
+                        <button type="button" class="btn atlas-btn-ghost" title="Show all places" @onclick="FitAllAsync">⤢</button>
+                    }
+                </div>
+                <LocationList Locations="locations"
+                              SelectedId="selectedId"
+                              OnSelect="SelectAsync"
+                              OnEdit="StartEdit"
+                              OnDelete="DeleteAsync" />
+            }
+        </div>
+    </aside>
+</div>
+
+@code {
+    private static readonly (MapTheme Value, string Icon, string Label)[] Themes =
+    [
+        (MapTheme.Light, "☀", "Light"),
+        (MapTheme.Dark, "☾", "Dark"),
+        (MapTheme.Emerald, "✦", "Emerald"),
+    ];
+
+    private readonly MarkerStyle brandStyle = new() { Size = 14, TailLength = 22, TailCurve = 0.4, Glow = 0.5 };
+
+    private WorldMap? map;
+    private LocationEditor? editor;
+    private IJSObjectReference? helpers;
+    private List<TravelLocation> locations = [];
+    private LocationDraft? draft;
+    private MarkerStyle lastStyle = new();
+    private MapSettings mapSettings = new();
+    private MapTheme theme = MapTheme.Light;
+    private Guid? selectedId;
+    private bool loaded;
+    private bool panelOpen = true;
+    private bool pickMode;
+
+    private string Summary
+    {
+        get
+        {
+            if (!loaded) return "Places lived & visited";
+            var lived = locations.Count(l => l.Kind == VisitKind.Lived);
+            var visited = locations.Count - lived;
+            return locations.Count == 0
+                ? "Places lived & visited"
+                : $"{lived} lived · {visited} visited";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        helpers = await JS.InvokeAsync<IJSObjectReference>("import", "./js/atlas.js");
+        var themeKey = await helpers.InvokeAsync<string>("getTheme");
+        theme = Enum.TryParse<MapTheme>(themeKey, ignoreCase: true, out var t) ? t : MapTheme.Light;
+
+        locations = await Store.LoadAsync();
+        lastStyle = await Store.LoadLastStyleAsync() ?? new MarkerStyle();
+        mapSettings = await Store.LoadMapSettingsAsync();
+        loaded = true;
+    }
+
+    private async Task SaveMapSettingsAsync(MapSettings settings)
+    {
+        mapSettings = settings;
+        await Store.SaveMapSettingsAsync(settings);
+    }
+
+    private async Task SetThemeAsync(MapTheme value)
+    {
+        theme = value;
+        if (helpers is not null)
+        {
+            await helpers.InvokeVoidAsync("setTheme", WorldMap.ThemeKey(value));
+        }
+    }
+
+    private void TogglePanel() => panelOpen = !panelOpen;
+
+    private void StartAdd()
+    {
+        selectedId = null;
+        pickMode = false;
+        draft = new LocationDraft { Style = lastStyle.Clone() };
+    }
+
+    private async Task StartEdit(TravelLocation location)
+    {
+        selectedId = location.Id;
+        pickMode = false;
+        draft = LocationDraft.FromLocation(location);
+        await FlyToAsync(new GeoPoint(location.Latitude, location.Longitude));
+    }
+
+    private void CancelDraft()
+    {
+        draft = null;
+        pickMode = false;
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        if (draft is not { Latitude: { } lat, Longitude: { } lng }) return;
+
+        var location = draft.EditingId is { } id ? locations.FirstOrDefault(l => l.Id == id) : null;
+        if (location is null)
+        {
+            location = new TravelLocation();
+            locations.Add(location);
+        }
+
+        location.Name = draft.Name;
+        location.Latitude = lat;
+        location.Longitude = lng;
+        location.Kind = draft.Kind;
+        location.Style = draft.Style.Clone();
+        location.Label = draft.Label.Trim();
+        location.LabelPosition = draft.LabelPosition;
+        lastStyle = draft.Style.Clone();
+
+        draft = null;
+        pickMode = false;
+        selectedId = location.Id;
+
+        await Store.SaveAsync(locations);
+        await Store.SaveLastStyleAsync(lastStyle);
+        await ScrollToSelectedAsync();
+    }
+
+    private async Task DeleteDraftAsync()
+    {
+        if (draft?.EditingId is { } id && locations.FirstOrDefault(l => l.Id == id) is { } location)
+        {
+            if (await DeleteAsync(location))
+            {
+                draft = null;
+                pickMode = false;
+            }
+        }
+    }
+
+    private async Task<bool> DeleteAsync(TravelLocation location)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Remove \"{location.Name}\" from the map?"))
+        {
+            return false;
+        }
+
+        locations.Remove(location);
+        if (selectedId == location.Id) selectedId = null;
+        await Store.SaveAsync(locations);
+        return true;
+    }
+
+    private async Task SelectAsync(TravelLocation location)
+    {
+        selectedId = location.Id;
+        await FlyToAsync(new GeoPoint(location.Latitude, location.Longitude));
+    }
+
+    private async Task HandleMarkerClickAsync(Guid id)
+    {
+        if (draft is not null) return;
+        selectedId = id;
+        panelOpen = true;
+        StateHasChanged();
+        await ScrollToSelectedAsync();
+    }
+
+    private async Task HandleMapClickAsync(GeoPoint point)
+    {
+        if (!pickMode || editor is null) return;
+        pickMode = false;
+        await editor.SetPositionFromMapAsync(point);
+    }
+
+    private async Task HandleDraftMovedAsync(GeoPoint point)
+    {
+        if (editor is not null)
+        {
+            await editor.SetPositionFromMapAsync(point);
+        }
+    }
+
+    private async Task FlyToAsync(GeoPoint point)
+    {
+        if (map is not null)
+        {
+            await map.FlyToAsync(point.Latitude, point.Longitude);
+        }
+    }
+
+    private Task FitAllAsync() => map?.FitToLocationsAsync() ?? Task.CompletedTask;
+
+    private async Task ScrollToSelectedAsync()
+    {
+        if (helpers is not null && selectedId is { } id)
+        {
+            await Task.Yield();
+            await helpers.InvokeVoidAsync("scrollIntoView", $"loc-{id:N}");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (helpers is not null)
+        {
+            try { await helpers.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+    }
+}

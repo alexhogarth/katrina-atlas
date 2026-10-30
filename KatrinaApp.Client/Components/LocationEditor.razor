@@ -1,0 +1,319 @@
+@using System.Globalization
+@inject GeocodingService Geocoder
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="atlas-editor">
+    <div class="atlas-editor-head">
+        <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnCancel" aria-label="Back to list">← Back</button>
+        <h2>@(Draft.EditingId is null ? "Add a place" : "Edit place")</h2>
+    </div>
+
+    <section class="atlas-section">
+        <div class="atlas-field-label">Find it</div>
+        <form class="atlas-search" @onsubmit="SearchAsync" @onsubmit:preventDefault>
+            <input class="form-control form-control-sm" type="search" placeholder="City, address or landmark…"
+                   @bind="query" @bind:event="oninput" aria-label="Search for a place" />
+            <button type="submit" class="btn btn-sm atlas-btn-primary" disabled="@(searching || string.IsNullOrWhiteSpace(query))">
+                @(searching ? "…" : "Search")
+            </button>
+        </form>
+
+        @if (results is { Count: > 0 })
+        {
+            <ul class="atlas-results">
+                @foreach (var result in results)
+                {
+                    <li>
+                        <button type="button" @onclick="() => ChooseResultAsync(result)">
+                            <strong>@result.Name</strong>
+                            <small>@result.DisplayName</small>
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+        else if (results is { Count: 0 })
+        {
+            <p class="atlas-hint">No matches — try a different spelling or a nearby city.</p>
+        }
+
+        <div class="atlas-locate-row">
+            <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="UseGpsAsync" disabled="@locating">
+                @(locating ? "Locating…" : "📍 Use my location")
+            </button>
+            <button type="button" class="btn btn-sm atlas-btn-ghost @(PickMode ? "active" : null)" @onclick="TogglePickMode"
+                    aria-pressed="@PickMode">
+                🖱 @(PickMode ? "Click the map…" : "Pick on map")
+            </button>
+        </div>
+
+        <div class="atlas-coords">
+            <label>
+                <span>Latitude</span>
+                <input class="form-control form-control-sm" type="number" step="any" min="-90" max="90"
+                       @bind="Draft.Latitude" @bind:after="CoordinatesEdited" />
+            </label>
+            <label>
+                <span>Longitude</span>
+                <input class="form-control form-control-sm" type="number" step="any" min="-180" max="180"
+                       @bind="Draft.Longitude" @bind:after="CoordinatesEdited" />
+            </label>
+        </div>
+        @if (Draft.HasPosition)
+        {
+            <p class="atlas-hint">Tip: drag the marker on the map to fine-tune.</p>
+        }
+
+        @if (error is not null)
+        {
+            <p class="atlas-error" role="alert">@error</p>
+        }
+    </section>
+
+    <section class="atlas-section">
+        <label class="atlas-field-label" for="atlas-name">Name</label>
+        <input id="atlas-name" class="form-control form-control-sm" placeholder="e.g. Lisbon, Portugal" maxlength="120"
+               @bind="Draft.Name" @bind:event="oninput" @bind:after="NameEdited" />
+
+        <label class="atlas-field-label mt-3" for="atlas-label">Map label <span class="atlas-optional">optional</span></label>
+        <input id="atlas-label" class="form-control form-control-sm" placeholder="e.g. Where we met ♥"
+               maxlength="@TravelLocation.MaxLabelLength"
+               @bind="Draft.Label" @bind:event="oninput" @bind:after="NotifyChanged" />
+        @if (!string.IsNullOrWhiteSpace(Draft.Label))
+        {
+            <div class="atlas-segmented atlas-segmented-sm mt-2" role="radiogroup" aria-label="Label position">
+                @foreach (var (position, text) in LabelPositions)
+                {
+                    <button type="button" role="radio" aria-checked="@(Draft.LabelPosition == position)"
+                            class="@(Draft.LabelPosition == position ? "active" : null)" @onclick="() => SetLabelPosition(position)">
+                        @text
+                    </button>
+                }
+            </div>
+            @if (LabelsHidden)
+            {
+                <p class="atlas-hint">Place labels are hidden — turn them on in Map options to see this on the map.</p>
+            }
+        }
+
+        <div class="atlas-field-label mt-3">This is somewhere I've…</div>
+        <div class="atlas-segmented" role="radiogroup">
+            @foreach (var kind in Enum.GetValues<VisitKind>())
+            {
+                <button type="button" role="radio" aria-checked="@(Draft.Kind == kind)"
+                        class="@(Draft.Kind == kind ? "active" : null)" @onclick="() => SetKind(kind)">
+                    @(kind == VisitKind.Lived ? "🏡 Lived" : "✈️ Visited")
+                </button>
+            }
+        </div>
+    </section>
+
+    <section class="atlas-section">
+        <MarkerStyleEditor Style="Draft.Style" OnChanged="NotifyChanged" />
+    </section>
+
+    <div class="atlas-editor-actions">
+        @if (Draft.EditingId is not null)
+        {
+            <button type="button" class="btn btn-sm atlas-btn-danger" @onclick="OnDelete">Delete</button>
+        }
+        <span class="flex-grow-1"></span>
+        <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnCancel">Cancel</button>
+        <button type="button" class="btn btn-sm atlas-btn-primary" @onclick="SaveAsync" disabled="@(!Draft.HasPosition)"
+                title="@(Draft.HasPosition ? null : "Choose a location first")">
+            Save place
+        </button>
+    </div>
+</div>
+
+@code {
+    private string query = "";
+    private bool searching;
+    private bool locating;
+    private string? error;
+    private IReadOnlyList<GeoSearchResult>? results;
+    private bool nameIsAuto;
+    private IJSObjectReference? helpers;
+    private CancellationTokenSource? reverseCts;
+
+    private static readonly (LabelPosition Position, string Text)[] LabelPositions =
+    [
+        (LabelPosition.Left, "← Left"),
+        (LabelPosition.Above, "↑ Above"),
+        (LabelPosition.Below, "↓ Below"),
+        (LabelPosition.Right, "Right →"),
+    ];
+
+    [Parameter, EditorRequired] public LocationDraft Draft { get; set; } = default!;
+    /// <summary>True when place labels are switched off in the map options.</summary>
+    [Parameter] public bool LabelsHidden { get; set; }
+    [Parameter] public bool PickMode { get; set; }
+    [Parameter] public EventCallback<bool> PickModeChanged { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+    [Parameter] public EventCallback<GeoPoint> OnFlyTo { get; set; }
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+
+    protected override void OnInitialized() => nameIsAuto = string.IsNullOrWhiteSpace(Draft.Name);
+
+    /// <summary>Called by the parent when the user picks a point on the map or drags the draft marker.</summary>
+    public async Task SetPositionFromMapAsync(GeoPoint point)
+    {
+        await SetPositionAsync(point.Latitude, point.Longitude, fly: false);
+    }
+
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(query)) return;
+        searching = true;
+        error = null;
+        try
+        {
+            results = await Geocoder.SearchAsync(query);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            error = "Search is unavailable right now. You can still pick on the map or enter coordinates.";
+            results = null;
+        }
+        finally
+        {
+            searching = false;
+        }
+    }
+
+    private async Task ChooseResultAsync(GeoSearchResult result)
+    {
+        results = null;
+        query = "";
+        if (nameIsAuto || string.IsNullOrWhiteSpace(Draft.Name))
+        {
+            Draft.Name = result.Name;
+            nameIsAuto = true;
+        }
+        await SetPositionAsync(result.Latitude, result.Longitude, fly: true, lookupName: false);
+    }
+
+    private async Task UseGpsAsync()
+    {
+        locating = true;
+        error = null;
+        try
+        {
+            helpers ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/atlas.js");
+            var position = await helpers.InvokeAsync<GpsPosition>("getCurrentPosition");
+            await SetPositionAsync(position.Latitude, position.Longitude, fly: true);
+        }
+        catch (JSException ex)
+        {
+            error = ex.Message.Split('\n')[0];
+        }
+        finally
+        {
+            locating = false;
+        }
+    }
+
+    private Task TogglePickMode() => PickModeChanged.InvokeAsync(!PickMode);
+
+    private async Task CoordinatesEdited()
+    {
+        error = null;
+        if (Draft.Latitude is { } lat && (lat < -90 || lat > 90))
+        {
+            error = "Latitude must be between -90 and 90.";
+            Draft.Latitude = Math.Clamp(lat, -90, 90);
+        }
+        if (Draft.Longitude is { } lng && (lng < -180 || lng > 180))
+        {
+            error = "Longitude must be between -180 and 180.";
+            Draft.Longitude = Math.Clamp(lng, -180, 180);
+        }
+
+        await NotifyChanged();
+        if (Draft is { Latitude: { } la, Longitude: { } lo })
+        {
+            await OnFlyTo.InvokeAsync(new GeoPoint(la, lo));
+            await LookupNameAsync(la, lo);
+        }
+    }
+
+    private Task NameEdited()
+    {
+        nameIsAuto = string.IsNullOrWhiteSpace(Draft.Name);
+        return NotifyChanged();
+    }
+
+    private Task SetKind(VisitKind kind)
+    {
+        Draft.Kind = kind;
+        return NotifyChanged();
+    }
+
+    private Task SetLabelPosition(LabelPosition position)
+    {
+        Draft.LabelPosition = position;
+        return NotifyChanged();
+    }
+
+    private async Task SetPositionAsync(double lat, double lng, bool fly, bool lookupName = true)
+    {
+        error = null;
+        Draft.Latitude = Math.Round(lat, 6);
+        Draft.Longitude = Math.Round(lng, 6);
+        await NotifyChanged();
+        if (fly)
+        {
+            await OnFlyTo.InvokeAsync(new GeoPoint(lat, lng));
+        }
+        if (lookupName)
+        {
+            await LookupNameAsync(lat, lng);
+        }
+    }
+
+    private async Task LookupNameAsync(double lat, double lng)
+    {
+        if (!nameIsAuto && !string.IsNullOrWhiteSpace(Draft.Name)) return;
+
+        reverseCts?.Cancel();
+        reverseCts = new CancellationTokenSource();
+        var token = reverseCts.Token;
+        try
+        {
+            var name = await Geocoder.ReverseAsync(lat, lng, token);
+            if (token.IsCancellationRequested || (!nameIsAuto && !string.IsNullOrWhiteSpace(Draft.Name))) return;
+            Draft.Name = name ?? string.Create(CultureInfo.InvariantCulture, $"{lat:0.###}, {lng:0.###}");
+            nameIsAuto = true;
+            await NotifyChanged();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+        }
+    }
+
+    private Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Draft.Name) && Draft is { Latitude: { } lat, Longitude: { } lng })
+        {
+            Draft.Name = string.Create(CultureInfo.InvariantCulture, $"{lat:0.###}, {lng:0.###}");
+        }
+        Draft.Name = Draft.Name.Trim();
+        return OnSave.InvokeAsync();
+    }
+
+    private Task NotifyChanged() => OnChanged.InvokeAsync();
+
+    public async ValueTask DisposeAsync()
+    {
+        reverseCts?.Cancel();
+        if (helpers is not null)
+        {
+            try { await helpers.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+    }
+
+    private sealed record GpsPosition(double Latitude, double Longitude);
+}

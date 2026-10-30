@@ -1,0 +1,32 @@
+@* Renders a marker style as inline SVG, scaled to fit its box. *@
+<span class="atlas-marker-preview @Class" aria-hidden="true">@((MarkupString)svg)</span>
+
+@code {
+    private string svg = "";
+
+    [Parameter, EditorRequired] public MarkerStyle Style { get; set; } = default!;
+    [Parameter, EditorRequired] public string IdPrefix { get; set; } = "";
+    /// <summary>When set, renders an icon-sized version (normalised size and capped tail) for lists/buttons.</summary>
+    [Parameter] public bool Compact { get; set; }
+    /// <summary>Caps the drawn tail so very long tails don't shrink the preview to nothing.</summary>
+    [Parameter] public double? MaxTail { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        var style = Style;
+        if (Compact)
+        {
+            style = Style.Clone();
+            style.Size = 20;
+            style.TailLength = Math.Min(Style.TailLength, 30);
+        }
+        else if (MaxTail is { } max && Style.TailLength > max)
+        {
+            style = Style.Clone();
+            style.TailLength = max;
+        }
+
+        svg = MarkerSvgRenderer.Render(style, IdPrefix, fitContainer: true).Svg;
+    }
+}

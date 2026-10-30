@@ -1,0 +1,174 @@
+@* Shape picker + appearance controls for a marker. Mutates Style in place and raises OnChanged. *@
+
+<div class="atlas-style">
+    <div class="atlas-style-stage">
+        <MarkerPreview Style="Style" IdPrefix="style-stage" MaxTail="240" />
+    </div>
+
+    <div class="atlas-field-label">Marker</div>
+    <div class="atlas-shapes" role="radiogroup" aria-label="Marker type">
+        @foreach (var info in MarkerShapes.All)
+        {
+            var shapeStyle = Style.Clone();
+            shapeStyle.Shape = info.Shape;
+            <button type="button" role="radio" aria-checked="@(Style.Shape == info.Shape)" title="@info.Label"
+                    class="atlas-shape @(Style.Shape == info.Shape ? "active" : null)"
+                    @onclick="() => SelectShape(info.Shape)">
+                <MarkerPreview Style="shapeStyle" IdPrefix="@($"shape-{info.Shape}")" Compact="true" />
+                <span>@info.Label</span>
+            </button>
+        }
+    </div>
+
+    <div class="atlas-field-label">Colour</div>
+    <div class="atlas-colors">
+        <input type="color" class="atlas-color-input" title="Custom colour"
+               @bind="Style.Color" @bind:event="oninput" @bind:after="Changed" />
+        @foreach (var swatch in Swatches)
+        {
+            <button type="button" class="atlas-swatch @(string.Equals(Style.Color, swatch, StringComparison.OrdinalIgnoreCase) ? "active" : null)"
+                    style="--swatch:@swatch" title="@swatch" aria-label="Colour @swatch"
+                    @onclick="() => SetColor(swatch)"></button>
+        }
+    </div>
+
+    <div class="atlas-sliders">
+        <label class="atlas-slider">
+            <span>Size <em>@Style.Size.ToString("0")px</em></span>
+            <input type="range" min="6" max="64" step="1" @bind="Style.Size" @bind:event="oninput" @bind:after="Changed" />
+        </label>
+
+        @if (Info.UsesRotation)
+        {
+            <label class="atlas-slider">
+                <span>Rotation <em>@Style.Rotation.ToString("0")°</em></span>
+                <input type="range" min="0" max="359" step="1" @bind="Style.Rotation" @bind:event="oninput" @bind:after="Changed" />
+            </label>
+        }
+
+        @if (Info.UsesTail)
+        {
+            <div class="atlas-slider">
+                <span>
+                    <label for="atlas-tail">Tail length</label>
+                    <em class="atlas-num">
+                        <input type="number" min="0" max="@MarkerStyle.MaxTailLength" step="1" aria-label="Tail length in pixels"
+                               @bind="TailNumber" @bind:after="Changed" />px
+                    </em>
+                </span>
+                @* Quadratic scale: fine control for short tails, still reaches the 2000px maximum. *@
+                <input id="atlas-tail" type="range" min="0" max="@TailSliderSteps" step="1"
+                       value="@TailToSlider(Style.TailLength)" @oninput="TailSliderInput" />
+            </div>
+            <label class="atlas-slider">
+                <span>Tail curve <em>@Style.TailCurve.ToString("0.00")</em></span>
+                <input type="range" min="-1" max="1" step="0.05" @bind="Style.TailCurve" @bind:event="oninput" @bind:after="Changed" />
+            </label>
+        }
+
+        @if (Info.UsesPoints)
+        {
+            <label class="atlas-slider">
+                <span>Points <em>@Style.Points</em></span>
+                <input type="range" min="3" max="12" step="1" @bind="Style.Points" @bind:event="oninput" @bind:after="Changed" />
+            </label>
+        }
+
+        @if (Info.UsesThickness)
+        {
+            <label class="atlas-slider">
+                <span>@Info.ThicknessLabel <em>@Style.Thickness.ToString("0.00")</em></span>
+                <input type="range" min="0.05" max="0.8" step="0.01" @bind="Style.Thickness" @bind:event="oninput" @bind:after="Changed" />
+            </label>
+        }
+
+        <label class="atlas-slider">
+            <span>Glow <em>@Style.Glow.ToString("0%")</em></span>
+            <input type="range" min="0" max="1" step="0.05" @bind="Style.Glow" @bind:event="oninput" @bind:after="Changed" />
+        </label>
+
+        <label class="atlas-slider">
+            <span>Opacity <em>@Style.Opacity.ToString("0%")</em></span>
+            <input type="range" min="0.2" max="1" step="0.05" @bind="Style.Opacity" @bind:event="oninput" @bind:after="Changed" />
+        </label>
+    </div>
+
+    <div class="atlas-style-footer">
+        <div class="form-check form-switch m-0">
+            <input class="form-check-input" type="checkbox" role="switch" id="atlas-animate"
+                   @bind="Style.Animate" @bind:after="Changed" />
+            <label class="form-check-label" for="atlas-animate">Twinkle</label>
+        </div>
+        <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="ResetStyle">Reset look</button>
+    </div>
+</div>
+
+@code {
+    private static readonly string[] Swatches =
+    [
+        "#ffffff", "#b8ffe0", "#ffd76a", "#ff9f43", "#ff6b6b",
+        "#ff8fd8", "#b28dff", "#6bc5ff", "#2ecc71", "#1b1b1b",
+    ];
+
+    [Parameter, EditorRequired] public MarkerStyle Style { get; set; } = default!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private MarkerShapeInfo Info => MarkerShapes.Get(Style.Shape);
+
+    private const int TailSliderSteps = 1000;
+
+    private static int TailToSlider(double tail) =>
+        (int)Math.Round(Math.Sqrt(Math.Clamp(tail, 0, MarkerStyle.MaxTailLength) / MarkerStyle.MaxTailLength) * TailSliderSteps);
+
+    private Task TailSliderInput(ChangeEventArgs e)
+    {
+        if (!double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var p)) return Task.CompletedTask;
+        var t = Math.Clamp(p / TailSliderSteps, 0, 1);
+        Style.TailLength = Math.Round(MarkerStyle.MaxTailLength * t * t);
+        return Changed();
+    }
+
+    private int TailNumber
+    {
+        get => (int)Math.Round(Style.TailLength);
+        set => Style.TailLength = Math.Clamp(value, 0, (int)MarkerStyle.MaxTailLength);
+    }
+
+    private Task Changed() => OnChanged.InvokeAsync();
+
+    private Task SelectShape(MarkerShape shape)
+    {
+        Style.Shape = shape;
+        return Changed();
+    }
+
+    private Task SetColor(string color)
+    {
+        Style.Color = color;
+        return Changed();
+    }
+
+    private Task ResetStyle()
+    {
+        var defaults = new MarkerStyle { Shape = Style.Shape, Color = Style.Color };
+        if (Style.Shape is MarkerShape.Plane) defaults.Rotation = 45;
+        else if (Style.Shape is not MarkerShape.ShootingStar) defaults.Rotation = 0;
+        CopyFrom(defaults);
+        return Changed();
+    }
+
+    private void CopyFrom(MarkerStyle source)
+    {
+        Style.Shape = source.Shape;
+        Style.Color = source.Color;
+        Style.Size = source.Size;
+        Style.Rotation = source.Rotation;
+        Style.TailLength = source.TailLength;
+        Style.TailCurve = source.TailCurve;
+        Style.Thickness = source.Thickness;
+        Style.Points = source.Points;
+        Style.Glow = source.Glow;
+        Style.Opacity = source.Opacity;
+        Style.Animate = source.Animate;
+    }
+}

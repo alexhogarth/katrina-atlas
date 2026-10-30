@@ -1,0 +1,10 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+
+# Personal reference images - keep out of the public repo
+*.jpg
+*.jpeg
+*.heic

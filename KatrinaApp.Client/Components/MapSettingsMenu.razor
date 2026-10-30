@@ -1,0 +1,71 @@
+@* Floating "Map options" button + popover with basemap / overlay toggles. *@
+
+<div class="atlas-map-options @(open ? "open" : null)">
+    <button type="button" class="atlas-map-options-toggle" @onclick="Toggle"
+            aria-expanded="@open" aria-controls="atlas-map-options-card" title="Map options">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linejoin="round">
+            <path d="M12 3 2.5 8 12 13l9.5-5L12 3Z" />
+            <path d="m2.5 12 9.5 5 9.5-5" />
+            <path d="m2.5 16 9.5 5 9.5-5" />
+        </svg>
+        <span>Map options</span>
+    </button>
+
+    @if (open)
+    {
+        <div class="atlas-map-options-backdrop" @onclick="Close"></div>
+        <div id="atlas-map-options-card" class="atlas-map-options-card" role="group" aria-label="Map options"
+             @onkeydown="HandleKeyDown">
+            <div class="atlas-field-label">Show on the map</div>
+            @foreach (var option in Options)
+            {
+                var id = $"atlas-opt-{option.Key}";
+                var on = option.Get(Settings);
+                <label class="atlas-switch" for="@id">
+                    <span class="atlas-switch-text">
+                        <strong>@option.Title</strong>
+                        <small>@option.Hint</small>
+                    </span>
+                    <input id="@id" type="checkbox" role="switch" checked="@on"
+                           @onchange="e => SetAsync(option, e.Value is true)" />
+                    <span class="atlas-switch-track" aria-hidden="true"></span>
+                </label>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private sealed record Option(string Key, string Title, string Hint, Func<MapSettings, bool> Get, Action<MapSettings, bool> Set);
+
+    private static readonly Option[] Options =
+    [
+        new("borders", "Borders", "Country & state lines", s => s.ShowBorders, (s, v) => s.ShowBorders = v),
+        new("countries", "Country names", "Labels for countries", s => s.ShowCountryNames, (s, v) => s.ShowCountryNames = v),
+        new("cities", "City names", "Cities, towns & villages", s => s.ShowCityNames, (s, v) => s.ShowCityNames = v),
+        new("labels", "Place labels", "Your own labels on markers", s => s.ShowPlaceLabels, (s, v) => s.ShowPlaceLabels = v),
+    ];
+
+    private bool open;
+
+    [Parameter, EditorRequired] public MapSettings Settings { get; set; } = default!;
+    /// <summary>Raised with an updated copy of the settings.</summary>
+    [Parameter] public EventCallback<MapSettings> OnChanged { get; set; }
+
+    private void Toggle() => open = !open;
+
+    private void Close() => open = false;
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") open = false;
+    }
+
+    private Task SetAsync(Option option, bool value)
+    {
+        var next = Settings.Clone();
+        option.Set(next, value);
+        return OnChanged.InvokeAsync(next);
+    }
+}

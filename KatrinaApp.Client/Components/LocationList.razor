@@ -1,0 +1,63 @@
+@using System.Globalization
+
+<div class="atlas-list">
+    @if (Locations.Count == 0)
+    {
+        <div class="atlas-empty">
+            <div class="atlas-empty-art">
+                <MarkerPreview Style="emptyStyle" IdPrefix="empty-art" />
+            </div>
+            <p>No places yet.</p>
+            <p class="atlas-hint">Add everywhere you've lived or visited and watch the map light up.</p>
+        </div>
+    }
+    else
+    {
+        @foreach (var group in Groups)
+        {
+            <div class="atlas-group-title">@group.Title <span>@group.Items.Count</span></div>
+            <ul>
+                @foreach (var location in group.Items)
+                {
+                    <li id="loc-@location.Id.ToString("N")" class="atlas-item @(location.Id == SelectedId ? "selected" : null)">
+                        <button type="button" class="atlas-item-main" @onclick="() => OnSelect.InvokeAsync(location)"
+                                title="Show on map">
+                            <MarkerPreview Style="location.Style" IdPrefix="@($"li-{location.Id:N}")" Compact="true" Class="atlas-item-icon" />
+                            <span class="atlas-item-text">
+                                <strong>@location.Name</strong>
+                                @if (!string.IsNullOrWhiteSpace(location.Label))
+                                {
+                                    <span class="atlas-item-label">“@location.Label”</span>
+                                }
+                                <small>@FormatCoords(location)</small>
+                            </span>
+                        </button>
+                        <button type="button" class="atlas-icon-btn" title="Edit" aria-label="Edit @location.Name"
+                                @onclick="() => OnEdit.InvokeAsync(location)">✎</button>
+                        <button type="button" class="atlas-icon-btn danger" title="Remove" aria-label="Remove @location.Name"
+                                @onclick="() => OnDelete.InvokeAsync(location)">🗑</button>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    private readonly MarkerStyle emptyStyle = new() { Size = 26, TailLength = 70, Animate = true };
+
+    [Parameter, EditorRequired] public IReadOnlyList<TravelLocation> Locations { get; set; } = [];
+    [Parameter] public Guid? SelectedId { get; set; }
+    [Parameter] public EventCallback<TravelLocation> OnSelect { get; set; }
+    [Parameter] public EventCallback<TravelLocation> OnEdit { get; set; }
+    [Parameter] public EventCallback<TravelLocation> OnDelete { get; set; }
+
+    private IEnumerable<(string Title, List<TravelLocation> Items)> Groups =>
+        new[] { (Kind: VisitKind.Lived, Title: "🏡 Lived"), (Kind: VisitKind.Visited, Title: "✈️ Visited") }
+            .Select(g => (g.Title, Items: Locations.Where(l => l.Kind == g.Kind).OrderBy(l => l.Name, StringComparer.CurrentCultureIgnoreCase).ToList()))
+            .Where(g => g.Items.Count > 0);
+
+    private static string FormatCoords(TravelLocation l) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"{Math.Abs(l.Latitude):0.00}°{(l.Latitude >= 0 ? "N" : "S")}, {Math.Abs(l.Longitude):0.00}°{(l.Longitude >= 0 ? "E" : "W")}");
+}

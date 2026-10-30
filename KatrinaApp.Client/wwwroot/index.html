@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light" data-bs-theme="light">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Katrina's Atlas</title>
+    <!-- Rewritten at deploy time when hosted under a sub-path (e.g. GitHub Pages project sites). -->
+    <base href="/" />
+    <script>
+        // Apply the saved (or OS-preferred) theme before first paint to avoid a flash.
+        (function () {
+            try {
+                var t = localStorage.getItem('katrina-atlas.theme');
+                if (t !== 'light' && t !== 'dark' && t !== 'emerald') {
+                    t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.documentElement.dataset.theme = t;
+                document.documentElement.dataset.bsTheme = t === 'light' ? 'light' : 'dark';
+            } catch (e) { }
+        })();
+    </script>
+    <link rel="preload" id="webassembly" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="lib/leaflet/leaflet.css" />
+    <link rel="stylesheet" href="lib/maplibre/maplibre-gl.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="atlas.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <script type="importmap"></script>
+</head>
+
+<body>
+    <div id="app">
+        <div class="atlas-boot" aria-hidden="true">
+            <div class="atlas-boot-star"></div>
+            <p>Loading the atlas…</p>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+
+    <script src="lib/leaflet/leaflet.js"></script>
+    <script src="lib/maplibre/maplibre-gl.js"></script>
+    <script src="lib/maplibre/leaflet-maplibre-gl.js"></script>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+</body>
+
+</html>

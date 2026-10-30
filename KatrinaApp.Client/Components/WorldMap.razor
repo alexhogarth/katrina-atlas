@@ -1,0 +1,162 @@
+@using System.Text.Json
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="atlas-map" @ref="element"></div>
+
+@code {
+    private ElementReference element;
+    private IJSObjectReference? module;
+    private IJSObjectReference? map;
+    private DotNetObjectReference<WorldMap>? selfRef;
+    private string? lastMarkersJson;
+    private string? lastDraftJson;
+    private string? lastSettingsJson;
+    private MapTheme? lastTheme;
+    private bool? lastPickMode;
+    private bool hasFitted;
+
+    [Parameter] public IReadOnlyList<TravelLocation> Locations { get; set; } = [];
+    [Parameter] public LocationDraft? Draft { get; set; }
+    [Parameter] public MapTheme Theme { get; set; }
+    [Parameter] public MapSettings Settings { get; set; } = new();
+    [Parameter] public bool PickMode { get; set; }
+    [Parameter] public Guid? SelectedId { get; set; }
+    /// <summary>Once true, the map fits itself to the saved locations (once).</summary>
+    [Parameter] public bool IsLoaded { get; set; }
+    /// <summary>CSS selector of an element that may overlay the map (fit/fly-to keep points clear of it).</summary>
+    [Parameter] public string? ObstructionSelector { get; set; }
+    [Parameter] public EventCallback<GeoPoint> OnMapClick { get; set; }
+    [Parameter] public EventCallback<GeoPoint> OnDraftMoved { get; set; }
+    [Parameter] public EventCallback<Guid> OnMarkerClick { get; set; }
+
+    public static string ThemeKey(MapTheme theme) => theme.ToString().ToLowerInvariant();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/worldMap.js");
+            selfRef = DotNetObjectReference.Create(this);
+            lastSettingsJson = SettingsJson();
+            map = await module.InvokeAsync<IJSObjectReference>("createMap", element, selfRef,
+                new { theme = ThemeKey(Theme), settings = lastSettingsJson, obstructionSelector = ObstructionSelector });
+            lastTheme = Theme;
+        }
+
+        await SyncAsync();
+    }
+
+    private string SettingsJson() => JsonSerializer.Serialize(Settings, AtlasJsonContext.Default.MapSettings);
+
+    private async Task SyncAsync()
+    {
+        if (map is null)
+        {
+            return;
+        }
+
+        if (lastTheme != Theme)
+        {
+            lastTheme = Theme;
+            await map.InvokeVoidAsync("setTheme", ThemeKey(Theme));
+        }
+
+        var settingsJson = SettingsJson();
+        if (settingsJson != lastSettingsJson)
+        {
+            lastSettingsJson = settingsJson;
+            await map.InvokeVoidAsync("setSettings", settingsJson);
+        }
+
+        if (lastPickMode != PickMode)
+        {
+            lastPickMode = PickMode;
+            await map.InvokeVoidAsync("setPickMode", PickMode);
+        }
+
+        var markers = Locations
+            .Where(l => l.Id != Draft?.EditingId)
+            .Select(l => ToDto(l.Id.ToString("N"), l.Latitude, l.Longitude, l.Name, l.Label, l.LabelPosition, l.Style, l.Id == SelectedId))
+            .ToList();
+        var markersJson = JsonSerializer.Serialize(markers, AtlasJsonContext.Default.ListMapMarkerDto);
+        var fit = IsLoaded && !hasFitted;
+        if (markersJson != lastMarkersJson || fit)
+        {
+            lastMarkersJson = markersJson;
+            hasFitted |= fit;
+            await map.InvokeVoidAsync("setMarkers", markersJson, fit);
+        }
+
+        string? draftJson = null;
+        if (Draft is { Latitude: { } lat, Longitude: { } lng })
+        {
+            var name = string.IsNullOrWhiteSpace(Draft.Name) ? "New place" : Draft.Name;
+            draftJson = JsonSerializer.Serialize(
+                ToDto("draft", lat, lng, name, Draft.Label, Draft.LabelPosition, Draft.Style, false), AtlasJsonContext.Default.MapMarkerDto);
+        }
+
+        if (draftJson != lastDraftJson)
+        {
+            lastDraftJson = draftJson;
+            await map.InvokeVoidAsync("setDraft", draftJson);
+        }
+    }
+
+    private static MapMarkerDto ToDto(string id, double lat, double lng, string name, string? label, LabelPosition labelPosition,
+        MarkerStyle style, bool selected)
+    {
+        var r = MarkerSvgRenderer.Render(style, $"m{id}");
+        return new MapMarkerDto(id, lat, lng, r.Svg, r.Width, r.Height, r.AnchorX, r.AnchorY, r.HitX, r.HitY, r.HitRadius,
+            name, label?.Trim() ?? "", labelPosition.ToString().ToLowerInvariant(), MarkerSvgRenderer.SanitizeColor(style.Color),
+            style.Animate, selected);
+    }
+
+    public async Task FlyToAsync(double latitude, double longitude, double? zoom = null)
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("flyTo", latitude, longitude, zoom);
+        }
+    }
+
+    public async Task FitToLocationsAsync()
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("fitToMarkers");
+        }
+    }
+
+    [JSInvokable("OnMapClick")]
+    public Task HandleMapClick(double lat, double lng) => OnMapClick.InvokeAsync(new GeoPoint(lat, lng));
+
+    [JSInvokable("OnDraftMoved")]
+    public Task HandleDraftMoved(double lat, double lng) => OnDraftMoved.InvokeAsync(new GeoPoint(lat, lng));
+
+    [JSInvokable("OnMarkerClick")]
+    public Task HandleMarkerClick(string id) =>
+        Guid.TryParseExact(id, "N", out var guid) ? OnMarkerClick.InvokeAsync(guid) : Task.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (map is not null)
+            {
+                await map.InvokeVoidAsync("dispose");
+                await map.DisposeAsync();
+            }
+
+            if (module is not null)
+            {
+                await module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+
+        selfRef?.Dispose();
+    }
+}
