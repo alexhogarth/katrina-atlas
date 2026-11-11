@@ -120,6 +120,38 @@
         }
     }
 
+    public async Task<double> GetZoomAsync() =>
+        map is null ? 2.5 : await map.InvokeAsync<double>("getZoom");
+
+    /// <summary>Shows the export frame (width / height = <paramref name="aspect"/>) over the map.</summary>
+    public async Task StartExportAsync(double aspect)
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("startExport", aspect);
+        }
+    }
+
+    public async Task EndExportAsync()
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("endExport");
+        }
+    }
+
+    public async Task FitToExportFrameAsync()
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("fitToFrame");
+        }
+    }
+
+    /// <summary>Downloads what's inside the export frame as a PNG. Returns a warning to show, if any.</summary>
+    public async Task<string?> ExportPngAsync(int width, int height, string fileName) =>
+        map is null ? null : await map.InvokeAsync<string?>("exportPng", width, height, fileName);
+
     public async Task FitToLocationsAsync()
     {
         if (map is not null)

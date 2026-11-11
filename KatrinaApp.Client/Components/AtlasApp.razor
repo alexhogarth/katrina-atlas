@@ -2,7 +2,7 @@
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
-<div class="atlas @(panelOpen ? "panel-open" : "panel-closed")">
+<div class="atlas @(panelOpen ? "panel-open" : "panel-closed") @(exportPreset is not null ? "atlas-exporting" : null)">
     <WorldMap @ref="map"
               Locations="locations"
               Draft="draft"
@@ -16,7 +16,18 @@
               OnDraftMoved="HandleDraftMovedAsync"
               OnMarkerClick="HandleMarkerClickAsync" />
 
-    <MapSettingsMenu Settings="mapSettings" OnChanged="SaveMapSettingsAsync" />
+    <MapSettingsMenu Settings="mapSettings" OnChanged="SaveMapSettingsAsync" OnExport="StartExportAsync" />
+
+    @if (exportPreset is not null)
+    {
+        <ExportBar Preset="exportPreset"
+                   Busy="exporting"
+                   Message="@exportMessage"
+                   OnPresetChanged="ChangeExportPresetAsync"
+                   OnFit="FitExportAsync"
+                   OnDownload="DownloadPngAsync"
+                   OnCancel="EndExportAsync" />
+    }
 
     <button type="button" class="atlas-panel-toggle" @onclick="TogglePanel"
             aria-label="@(panelOpen ? "Hide places panel" : "Show places panel")" aria-expanded="@panelOpen">
@@ -41,12 +52,11 @@
                 </div>
             </div>
             <div class="atlas-theme-switch" role="radiogroup" aria-label="Theme">
-                @foreach (var (value, icon, label) in Themes)
+                @foreach (var (value, label, water, land) in Themes)
                 {
-                    <button type="button" role="radio" aria-checked="@(theme == value)" title="@label"
-                            class="@(theme == value ? "active" : null)" @onclick="() => SetThemeAsync(value)">
-                        @icon
-                    </button>
+                    <button type="button" role="radio" aria-checked="@(theme == value)" title="@label" aria-label="@label"
+                            class="@(theme == value ? "active" : null)" style="--sw-water: @water; --sw-land: @land"
+                            @onclick="() => SetThemeAsync(value)"></button>
                 }
             </div>
         </header>
@@ -89,11 +99,15 @@
 </div>
 
 @code {
-    private static readonly (MapTheme Value, string Icon, string Label)[] Themes =
+    // Swatch colours match the basemap palettes in worldMap.js.
+    private static readonly (MapTheme Value, string Label, string Water, string Land)[] Themes =
     [
-        (MapTheme.Light, "☀", "Light"),
-        (MapTheme.Dark, "☾", "Dark"),
-        (MapTheme.Emerald, "✦", "Emerald"),
+        (MapTheme.Light, "Light", "#c6d3dd", "#eceae6"),
+        (MapTheme.Sand, "Sand", "#c9d8d5", "#f3ebdd"),
+        (MapTheme.Emerald, "Emerald", "#11523f", "#3daa87"),
+        (MapTheme.Dark, "Dark", "#18191c", "#2e2f33"),
+        (MapTheme.Navy, "Navy (deep blue)", "#051c2c", "#123653"),
+        (MapTheme.Midnight, "Midnight", "#070818", "#1b1e3a"),
     ];
 
     private readonly MarkerStyle brandStyle = new() { Size = 14, TailLength = 22, TailCurve = 0.4, Glow = 0.5 };
@@ -110,6 +124,9 @@
     private bool loaded;
     private bool panelOpen = true;
     private bool pickMode;
+    private ExportBar.ExportPreset? exportPreset;
+    private bool exporting;
+    private string? exportMessage;
 
     private string Summary
     {
@@ -138,6 +155,12 @@
 
     private async Task SaveMapSettingsAsync(MapSettings settings)
     {
+        if (settings.MarkerZoom < 0)
+        {
+            // Lock marker sizes to how they look right now.
+            settings.MarkerZoom = map is null ? 2.5 : Math.Round(await map.GetZoomAsync(), 2);
+        }
+
         mapSettings = settings;
         await Store.SaveMapSettingsAsync(settings);
     }
@@ -152,6 +175,65 @@
     }
 
     private void TogglePanel() => panelOpen = !panelOpen;
+
+    private async Task StartExportAsync()
+    {
+        pickMode = false;
+        exportMessage = null;
+        exportPreset ??= ExportBar.Presets[0];
+        StateHasChanged();
+        if (map is not null)
+        {
+            await map.StartExportAsync(exportPreset.Aspect);
+            if (locations.Count > 0)
+            {
+                await map.FitToExportFrameAsync();
+            }
+        }
+    }
+
+    private async Task ChangeExportPresetAsync(ExportBar.ExportPreset preset)
+    {
+        exportPreset = preset;
+        exportMessage = null;
+        if (map is not null)
+        {
+            await map.StartExportAsync(preset.Aspect);
+        }
+    }
+
+    private Task FitExportAsync() => map?.FitToExportFrameAsync() ?? Task.CompletedTask;
+
+    private async Task DownloadPngAsync()
+    {
+        if (map is null || exportPreset is null) return;
+        exporting = true;
+        exportMessage = null;
+        StateHasChanged();
+        try
+        {
+            exportMessage = await map.ExportPngAsync(exportPreset.Width, exportPreset.Height,
+                $"katrinas-atlas-{exportPreset.FileSuffix}.png");
+        }
+        catch (JSException ex)
+        {
+            exportMessage = $"Sorry, the image couldn't be saved: {ex.Message}";
+        }
+        finally
+        {
+            exporting = false;
+        }
+    }
+
+    private async Task EndExportAsync()
+    {
+        exportPreset = null;
+        exportMessage = null;
+        if (map is not null)
+        {
+            await map.EndExportAsync();
+        }
+    }
 
     private void StartAdd()
     {

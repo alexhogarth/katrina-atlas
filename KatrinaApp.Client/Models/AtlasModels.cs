@@ -5,6 +5,9 @@ public enum MapTheme
     Light,
     Dark,
     Emerald,
+    Navy,
+    Midnight,
+    Sand,
 }
 
 public enum VisitKind
@@ -32,6 +35,11 @@ public sealed class MapSettings
     public bool ShowCityNames { get; set; } = true;
     /// <summary>Show the custom labels the user gave their places.</summary>
     public bool ShowPlaceLabels { get; set; } = true;
+    /// <summary>
+    /// When set, markers keep their size relative to the map: they look exactly as designed at this zoom level
+    /// and grow / shrink with the map when zooming. Null means markers stay a fixed size on screen.
+    /// </summary>
+    public double? MarkerZoom { get; set; }
 
     public MapSettings Clone() => (MapSettings)MemberwiseClone();
 }

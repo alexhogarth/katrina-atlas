@@ -2,9 +2,14 @@
 // Requires the global `L` (wwwroot/lib/leaflet) and, for the vector basemap, `maplibregl` plus the
 // Leaflet bridge `L.maplibreGL` (wwwroot/lib/maplibre). Without WebGL it falls back to raster tiles.
 
-const THEMES = ['light', 'dark', 'emerald'];
+const THEMES = ['light', 'dark', 'emerald', 'navy', 'midnight', 'sand'];
+// Themes with a pale basemap: markers get a soft outline (matches the .km-art rule in atlas.css).
+const PALE_THEMES = new Set(['light', 'sand']);
 const LABEL_POSITIONS = new Set(['right', 'left', 'above', 'below']);
-const DEFAULT_SETTINGS = { showBorders: true, showCountryNames: true, showCityNames: true, showPlaceLabels: true };
+const DEFAULT_SETTINGS = { showBorders: true, showCountryNames: true, showCityNames: true, showPlaceLabels: true, markerZoom: null };
+// Limits for markers that scale with the map, so they never vanish or swamp the screen.
+const MIN_MARKER_SCALE = 0.05;
+const MAX_MARKER_SCALE = 8;
 
 // ---------- Vector basemap (OpenFreeMap / OpenMapTiles schema, no API key) ----------
 
@@ -26,6 +31,22 @@ const PALETTES = {
         land: '#3daa87', water: '#11523f', ice: '#74c9aa', park: '#47b28f', building: '#4cb592',
         road: '#5dc19f', roadMinor: '#53b895', border: '#1a6e55', state: '#2f8f71',
         countryText: '#e9fff6', cityText: '#f2fffa', townText: '#d3f4e7', halo: 'rgba(12,72,55,0.85)',
+    },
+    // McKinsey-style deep blue (#051c2c) with slightly lighter navy land.
+    navy: {
+        land: '#123653', water: '#051c2c', ice: '#1b4467', park: '#143b59', building: '#183f5e',
+        road: '#1e4a6d', roadMinor: '#1a4262', border: '#3d6f96', state: '#24506f',
+        countryText: '#9db8cf', cityText: '#e3edf5', townText: '#a9c0d3', halo: 'rgba(5,28,44,0.9)',
+    },
+    midnight: {
+        land: '#1b1e3a', water: '#070818', ice: '#262a4d', park: '#1e2240', building: '#22264a',
+        road: '#2b3058', roadMinor: '#252a4f', border: '#4a4f80', state: '#2f3460',
+        countryText: '#a9add6', cityText: '#e4e6fa', townText: '#b1b4d8', halo: 'rgba(7,8,24,0.9)',
+    },
+    sand: {
+        land: '#f3ebdd', water: '#c9d8d5', ice: '#fbf8f2', park: '#e6e2cc', building: '#e7dfd1',
+        road: '#ffffff', roadMinor: '#f8f3ea', border: '#a08f78', state: '#cbbfae',
+        countryText: '#6b5a45', cityText: '#3b3226', townText: '#6e604f', halo: 'rgba(250,246,238,0.92)',
     },
 };
 
@@ -168,6 +189,9 @@ const RASTER = {
     light: { base: 'World_Light_Gray_Base', labels: 'World_Light_Gray_Reference' },
     dark: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
     emerald: { base: 'World_Dark_Gray_Base', labels: null },
+    navy: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
+    midnight: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
+    sand: { base: 'World_Light_Gray_Base', labels: 'World_Light_Gray_Reference' },
 };
 const esriUrl = name => `${ESRI}/${name}/MapServer/tile/{z}/{y}/{x}`;
 
@@ -291,7 +315,24 @@ export function createMap(element, dotnet, options) {
     function setSettings(json) {
         settings = { ...DEFAULT_SETTINGS, ...JSON.parse(json) };
         applyBasemap();
+        applyMarkerScale();
     }
+
+    // ---------- Marker size relative to the map ----------
+
+    // 1 = the marker's designed pixel size. With `markerZoom` set, markers grow/shrink with the map.
+    function markerScaleAt(zoom) {
+        if (typeof settings.markerZoom !== 'number') return 1;
+        return Math.min(MAX_MARKER_SCALE, Math.max(MIN_MARKER_SCALE, Math.pow(2, zoom - settings.markerZoom)));
+    }
+
+    function applyMarkerScale(zoom = map.getZoom()) {
+        element.style.setProperty('--km-scale', String(markerScaleAt(zoom)));
+    }
+
+    map.on('zoomanim', e => applyMarkerScale(e.zoom));
+    map.on('zoom', () => applyMarkerScale());
+    applyMarkerScale();
 
     function setMarkers(json, fit) {
         const list = JSON.parse(json);
@@ -432,7 +473,248 @@ export function createMap(element, dotnet, options) {
         applyBasemap();
     }
 
+    // ---------- PNG export ----------
+
+    let exportFrame = null; // { el, aspect }
+
+    // The part of the map not covered by the side panel / bottom sheet.
+    function visibleArea() {
+        const size = map.getSize();
+        const { right, bottom } = obstruction();
+        return { x: 0, y: 0, w: size.x - right, h: size.y - bottom };
+    }
+
+    // Largest rectangle with the export's aspect ratio that fits the visible map, with room for the controls.
+    function frameRect(aspect) {
+        const area = visibleArea();
+        const margin = { top: 24, side: 24, bottom: 110 };
+        const maxW = Math.max(80, area.w - margin.side * 2);
+        const maxH = Math.max(40, area.h - margin.top - margin.bottom);
+        let w = maxW;
+        let h = w / aspect;
+        if (h > maxH) {
+            h = maxH;
+            w = h * aspect;
+        }
+        return {
+            x: Math.round(area.x + (area.w - w) / 2),
+            y: Math.round(margin.top + (maxH - h) / 2),
+            w: Math.round(w),
+            h: Math.round(h),
+        };
+    }
+
+    function layoutFrame() {
+        if (!exportFrame) return;
+        const r = frameRect(exportFrame.aspect);
+        Object.assign(exportFrame.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+        exportFrame.rect = r;
+    }
+
+    function startExport(aspect) {
+        if (!exportFrame) {
+            const el = document.createElement('div');
+            el.className = 'atlas-export-frame';
+            element.appendChild(el);
+            exportFrame = { el, aspect };
+            // Let the map zoom out far enough to fit the whole world into a wide banner.
+            map.setMinZoom(0);
+            map.on('resize', layoutFrame);
+        }
+        exportFrame.aspect = aspect;
+        layoutFrame();
+    }
+
+    function endExport() {
+        if (!exportFrame) return;
+        map.off('resize', layoutFrame);
+        exportFrame.el.remove();
+        exportFrame = null;
+        map.setMinZoom(2);
+        if (map.getZoom() < 2) map.setZoom(2);
+    }
+
+    // Fit every saved place inside the export frame.
+    function fitToFrame() {
+        const points = [...markers.values()].map(e => e.marker.getLatLng());
+        if (!exportFrame || points.length === 0) return;
+        const size = map.getSize();
+        const r = exportFrame.rect;
+        const pad = Math.min(60, r.w * 0.06, r.h * 0.12);
+        map.fitBounds(L.latLngBounds(points), {
+            paddingTopLeft: [r.x + pad, r.y + pad],
+            paddingBottomRight: [size.x - r.x - r.w + pad, size.y - r.y - r.h + pad],
+            maxZoom: 6,
+            animate: true,
+        });
+    }
+
+    // Renders exactly what is inside the export frame to a width×height PNG and downloads it.
+    async function exportPng(width, height, fileName) {
+        const r = exportFrame?.rect ?? { ...visibleArea() };
+        const factor = width / r.w;
+        const zoom = map.getZoom() + Math.log2(factor);
+        const center = map.containerPointToLatLng([r.x + r.w / 2, r.y + r.h / 2]);
+        // Markers keep their on-screen proportions to the map, just at the export's resolution.
+        const markerScale = factor * markerScaleAt(map.getZoom());
+        const palette = PALETTES[theme] ?? PALETTES.light;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = palette.water;
+        ctx.fillRect(0, 0, width, height);
+
+        let project;
+        let warning = null;
+        if (glLayer) {
+            const rendered = await renderBasemap(width, height, center, zoom, buildStyle(theme, settings));
+            ctx.drawImage(rendered.canvas, 0, 0, width, height);
+            project = rendered.project;
+            rendered.dispose();
+        } else {
+            warning = 'This browser could not draw the map tiles, so the image only shows your places.';
+            // Plain Web Mercator maths, matching Leaflet's projection.
+            const worldSize = 256 * Math.pow(2, zoom);
+            const toPx = (lat, lng) => {
+                const s = Math.sin(lat * Math.PI / 180);
+                return {
+                    x: (lng + 180) / 360 * worldSize,
+                    y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * worldSize,
+                };
+            };
+            const c = toPx(center.lat, center.lng);
+            project = (lat, lng) => {
+                const p = toPx(lat, lng);
+                return { x: p.x - c.x + width / 2, y: p.y - c.y + height / 2 };
+            };
+        }
+
+        const list = [...markers.values()].map(e => e.data)
+            .sort((a, b) => Number(a.selected) - Number(b.selected));
+        const rootStyle = getComputedStyle(document.documentElement);
+        const labelStyle = {
+            text: rootStyle.getPropertyValue('--atlas-text').trim() || '#1d232b',
+            bg: rootStyle.getPropertyValue('--atlas-panel-solid').trim() || '#ffffff',
+            font: getComputedStyle(element).fontFamily || 'sans-serif',
+        };
+
+        for (const m of list) {
+            const p = nearestCopy(project, m.lat, m.lng, center.lng);
+            await drawMarker(ctx, m, p, markerScale);
+        }
+        if (settings.showPlaceLabels) {
+            for (const m of list) {
+                if (!m.label) continue;
+                const p = nearestCopy(project, m.lat, m.lng, center.lng);
+                drawLabel(ctx, m, p, markerScale, factor, labelStyle);
+            }
+        }
+        drawAttribution(ctx, width, height, factor, glLayer ? '© OpenStreetMap contributors · OpenFreeMap' : '© Esri, OpenStreetMap contributors', palette);
+
+        const blob = await new Promise((resolve, reject) =>
+            canvas.toBlob(b => (b ? resolve(b) : reject(new Error('The browser could not create the image.'))), 'image/png'));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName || 'katrinas-atlas.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        return warning;
+    }
+
+    // Draws a marker's SVG at the export scale, with its glow (and the pale-theme outline) via canvas filters.
+    async function drawMarker(ctx, m, p, scale) {
+        const shadows = [];
+        let svg = m.svg.replace(/filter:([^;"]*);/, (_, f) => {
+            for (const match of f.matchAll(/drop-shadow\(0 0 ([\d.]+)px (#[0-9a-fA-F]{6})\)/g)) {
+                shadows.push(`drop-shadow(0 0 ${(parseFloat(match[1]) * scale).toFixed(2)}px ${match[2]})`);
+            }
+            return '';
+        });
+        if (PALE_THEMES.has(theme)) {
+            shadows.push(`drop-shadow(0 0 ${(0.6 * scale).toFixed(2)}px rgba(20,28,40,0.75))`);
+            shadows.push(`drop-shadow(0 ${(1 * scale).toFixed(2)}px ${(2 * scale).toFixed(2)}px rgba(20,28,40,0.35))`);
+        }
+        const w = m.w * scale;
+        const h = m.h * scale;
+        svg = svg.replace(/width="[^"]*" height="[^"]*"/, `width="${w.toFixed(2)}" height="${h.toFixed(2)}"`);
+        // Pad the image so glows aren't clipped at its edges.
+        const glowPad = Math.ceil(Math.max(m.w, m.h) * scale * 0.5);
+
+        const img = await loadSvg(svg);
+        const buffer = document.createElement('canvas');
+        buffer.width = Math.ceil(w + glowPad * 2);
+        buffer.height = Math.ceil(h + glowPad * 2);
+        const bctx = buffer.getContext('2d');
+        bctx.filter = shadows.length ? shadows.join(' ') : 'none';
+        bctx.drawImage(img, glowPad, glowPad, w, h);
+        ctx.drawImage(buffer, p.x - m.ax * scale - glowPad, p.y - m.ay * scale - glowPad);
+    }
+
+    function drawLabel(ctx, m, p, markerScale, factor, style) {
+        const fontSize = 12.5 * factor;
+        const padX = 8 * factor;
+        const height = fontSize * 1.25 + 4 * factor;
+        ctx.save();
+        ctx.font = `600 ${fontSize}px ${style.font}`;
+        let text = m.label;
+        const maxText = 240 * factor - padX * 2;
+        if (ctx.measureText(text).width > maxText) {
+            while (text.length > 1 && ctx.measureText(`${text}…`).width > maxText) text = text.slice(0, -1);
+            text = `${text}…`;
+        }
+        const width = ctx.measureText(text).width + padX * 2;
+        const cx = p.x + m.hx * markerScale;
+        const cy = p.y + m.hy * markerScale;
+        const gap = m.hit * markerScale + 6 * factor;
+        const pos = LABEL_POSITIONS.has(m.labelPos) ? m.labelPos : 'right';
+        let x = cx + gap;
+        let y = cy - height / 2;
+        if (pos === 'left') x = cx - gap - width;
+        if (pos === 'above') { x = cx - width / 2; y = cy - gap - height; }
+        if (pos === 'below') { x = cx - width / 2; y = cy + gap; }
+
+        ctx.shadowColor = 'rgba(0,0,0,0.22)';
+        ctx.shadowBlur = 8 * factor;
+        ctx.shadowOffsetY = 2 * factor;
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, height / 2);
+        ctx.globalAlpha = 0.86;
+        ctx.fillStyle = style.bg;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = 'transparent';
+        ctx.lineWidth = 1 * factor;
+        ctx.strokeStyle = `${m.color}99`;
+        ctx.stroke();
+        ctx.fillStyle = style.text;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x + padX, y + height / 2 + fontSize * 0.04);
+        ctx.restore();
+    }
+
+    function drawAttribution(ctx, width, height, factor, text, palette) {
+        ctx.save();
+        const size = Math.max(9, 9 * Math.min(factor, 2));
+        ctx.font = `${size}px sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = palette.countryText;
+        ctx.globalAlpha = 0.55;
+        ctx.fillText(text, width - size * 0.6, height - size * 0.4);
+        ctx.restore();
+    }
+
     return {
+        getZoom: () => map.getZoom(),
+        startExport,
+        endExport,
+        fitToFrame,
+        exportPng,
         setTheme,
         setSettings,
         setMarkers,
@@ -442,6 +724,7 @@ export function createMap(element, dotnet, options) {
         fitToMarkers,
         invalidateSize,
         dispose() {
+            endExport();
             resizeObserver.disconnect();
             map.remove();
             markers.clear();
@@ -453,4 +736,73 @@ function tooltipContent(name) {
     const span = document.createElement('span');
     span.textContent = name;
     return span;
+}
+
+// Picks the copy of a point (lng ± 360°) closest to the view centre, so places near the date line still show.
+function nearestCopy(project, lat, lng, centerLng) {
+    const shift = Math.round((centerLng - lng) / 360) * 360;
+    return project(lat, lng + shift);
+}
+
+function loadSvg(svg) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Could not draw a marker.'));
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    });
+}
+
+// Draws the vector basemap off-screen at exactly width×height pixels.
+function renderBasemap(width, height, center, leafletZoom, style) {
+    return new Promise((resolve, reject) => {
+        const container = document.createElement('div');
+        Object.assign(container.style, {
+            position: 'fixed', left: '-100000px', top: '0', width: `${width}px`, height: `${height}px`,
+            pointerEvents: 'none',
+        });
+        document.body.appendChild(container);
+
+        let glMap;
+        const dispose = () => {
+            try { glMap?.remove(); } catch { /* already gone */ }
+            container.remove();
+        };
+        try {
+            glMap = new maplibregl.Map({
+                container,
+                style,
+                center: [center.lng, center.lat],
+                // MapLibre uses 512px tiles, Leaflet 256px.
+                zoom: leafletZoom - 1,
+                interactive: false,
+                attributionControl: false,
+                preserveDrawingBuffer: true,
+                pixelRatio: 1,
+                fadeDuration: 0,
+                renderWorldCopies: true,
+                maxCanvasSize: [8192, 8192],
+            });
+        } catch (err) {
+            dispose();
+            reject(err);
+            return;
+        }
+
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve({
+                canvas: glMap.getCanvas(),
+                project: (lat, lng) => glMap.project([lng, lat]),
+                dispose,
+            });
+        };
+        // Tiles normally load in a second or two; don't hang forever on a slow connection.
+        const timer = setTimeout(finish, 30000);
+        glMap.once('idle', finish);
+        glMap.on('error', e => console.warn('Export basemap:', e?.error?.message ?? e));
+    });
 }

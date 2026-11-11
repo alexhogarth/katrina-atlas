@@ -1,0 +1,52 @@
+@* Toolbar shown while framing a PNG export. The frame itself is drawn over the map by worldMap.js. *@
+
+<div class="atlas-export-bar" role="group" aria-label="Save image">
+    <strong>Save image</strong>
+    <select class="form-select form-select-sm" value="@Preset.Key" @onchange="ChangePresetAsync" aria-label="Image size"
+            disabled="@Busy">
+        @foreach (var preset in Presets)
+        {
+            <option value="@preset.Key">@preset.Label</option>
+        }
+    </select>
+    <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnFit" disabled="@Busy" title="Fit all your places into the frame">
+        ⤢ Fit my places
+    </button>
+    <button type="button" class="btn btn-sm atlas-btn-primary" @onclick="OnDownload" disabled="@Busy">
+        @(Busy ? "Saving…" : "Download PNG")
+    </button>
+    <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnCancel" disabled="@Busy">Done</button>
+    <span class="atlas-export-hint">Drag and zoom the map to frame the picture. Everything inside the dashed box is saved.</span>
+    @if (!string.IsNullOrEmpty(Message))
+    {
+        <span class="atlas-export-error" role="alert">@Message</span>
+    }
+</div>
+
+@code {
+    public sealed record ExportPreset(string Key, string Label, int Width, int Height, string FileSuffix)
+    {
+        public double Aspect => (double)Width / Height;
+    }
+
+    public static IReadOnlyList<ExportPreset> Presets { get; } =
+    [
+        new("linkedin", "LinkedIn banner (1584 × 396)", 1584, 396, "linkedin-banner"),
+        new("linkedin2x", "LinkedIn banner, extra sharp (3168 × 792)", 3168, 792, "linkedin-banner-2x"),
+        new("wide", "Widescreen (1920 × 1080)", 1920, 1080, "widescreen"),
+        new("square", "Square (2048 × 2048)", 2048, 2048, "square"),
+    ];
+
+    [Parameter, EditorRequired] public ExportPreset Preset { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public EventCallback<ExportPreset> OnPresetChanged { get; set; }
+    [Parameter] public EventCallback OnFit { get; set; }
+    [Parameter] public EventCallback OnDownload { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private Task ChangePresetAsync(ChangeEventArgs e) =>
+        Presets.FirstOrDefault(p => p.Key == e.Value as string) is { } preset
+            ? OnPresetChanged.InvokeAsync(preset)
+            : Task.CompletedTask;
+}

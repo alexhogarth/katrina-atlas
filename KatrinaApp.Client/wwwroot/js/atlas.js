@@ -9,7 +9,7 @@ export function getTheme() {
 export function setTheme(theme) {
     const root = document.documentElement;
     root.dataset.theme = theme;
-    root.dataset.bsTheme = theme === 'light' ? 'light' : 'dark';
+    root.dataset.bsTheme = theme === 'light' || theme === 'sand' ? 'light' : 'dark';
     try { localStorage.setItem(THEME_KEY, theme); } catch { /* storage unavailable */ }
 }
 

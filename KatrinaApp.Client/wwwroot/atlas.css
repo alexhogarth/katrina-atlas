@@ -57,6 +57,60 @@
     --atlas-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
+:root[data-theme="navy"] {
+    --atlas-bg: #031422;
+    --atlas-map-bg: #051c2c;
+    --atlas-panel: rgba(5, 28, 44, 0.9);
+    --atlas-panel-solid: #072439;
+    --atlas-text: #eaf1f7;
+    --atlas-muted: #93abc0;
+    --atlas-border: rgba(160, 200, 235, 0.13);
+    --atlas-card: rgba(160, 200, 235, 0.05);
+    --atlas-card-hover: rgba(160, 200, 235, 0.1);
+    --atlas-accent: #00a9f4;
+    --atlas-accent-soft: rgba(0, 169, 244, 0.16);
+    --atlas-accent-contrast: #031422;
+    --atlas-danger: #ff7b7b;
+    --atlas-stage: radial-gradient(circle at 50% 45%, #1d4a73 0%, #051c2c 75%);
+    --atlas-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="midnight"] {
+    --atlas-bg: #05060f;
+    --atlas-map-bg: #070818;
+    --atlas-panel: rgba(12, 13, 32, 0.9);
+    --atlas-panel-solid: #11132b;
+    --atlas-text: #eceefc;
+    --atlas-muted: #a1a5cc;
+    --atlas-border: rgba(190, 195, 255, 0.11);
+    --atlas-card: rgba(190, 195, 255, 0.05);
+    --atlas-card-hover: rgba(190, 195, 255, 0.1);
+    --atlas-accent: #b9a6ff;
+    --atlas-accent-soft: rgba(185, 166, 255, 0.16);
+    --atlas-accent-contrast: #0c0d20;
+    --atlas-danger: #ff8a8a;
+    --atlas-stage: radial-gradient(circle at 50% 45%, #2c2f5e 0%, #070818 75%);
+    --atlas-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="sand"] {
+    --atlas-bg: #f6f1e8;
+    --atlas-map-bg: #c9d8d5;
+    --atlas-panel: rgba(253, 250, 244, 0.92);
+    --atlas-panel-solid: #fdfaf4;
+    --atlas-text: #2e2820;
+    --atlas-muted: #7a6f60;
+    --atlas-border: rgba(60, 45, 25, 0.12);
+    --atlas-card: rgba(60, 45, 25, 0.04);
+    --atlas-card-hover: rgba(60, 45, 25, 0.08);
+    --atlas-accent: #b5653a;
+    --atlas-accent-soft: rgba(181, 101, 58, 0.14);
+    --atlas-accent-contrast: #ffffff;
+    --atlas-danger: #c43d3d;
+    --atlas-stage: radial-gradient(circle at 50% 45%, #4a4236 0%, #241f18 75%);
+    --atlas-shadow: 0 10px 30px rgba(60, 45, 25, 0.15);
+}
+
 html, body {
     height: 100%;
     margin: 0;
@@ -196,20 +250,31 @@ html, body {
     border: 1px solid var(--atlas-border);
 }
 
+.atlas-theme-switch {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 4px;
+    border-radius: 14px;
+}
+
+/* Each swatch shows the theme's sea (top-left) and land (bottom-right). */
 .atlas-theme-switch button {
-    width: 30px;
-    height: 30px;
-    border: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid rgba(128, 128, 128, 0.45);
     border-radius: 50%;
-    background: transparent;
-    color: var(--atlas-muted);
-    font-size: 0.95rem;
-    line-height: 1;
+    background: linear-gradient(135deg, var(--sw-water) 50%, var(--sw-land) 50%);
 }
 
 .atlas-theme-switch button.active {
-    background: var(--atlas-accent);
-    color: var(--atlas-accent-contrast);
+    outline: 2px solid var(--atlas-accent);
+    outline-offset: 1px;
+}
+
+.atlas-theme-switch button:focus-visible {
+    outline: 2px solid var(--atlas-text);
+    outline-offset: 1px;
 }
 
 .atlas-panel-body {
@@ -776,6 +841,9 @@ html, body {
 .km-art {
     width: 100%;
     height: 100%;
+    /* --km-scale is set on the map when markers scale with the map (1 = designed size). */
+    transform: scale(var(--km-scale, 1));
+    transform-origin: var(--km-ax) var(--km-ay);
 }
 
 .km-svg {
@@ -784,16 +852,17 @@ html, body {
 }
 
 /* Glows are designed for dark maps; a soft outline keeps pale markers readable on the light basemap. */
-:root[data-theme="light"] .km-art {
+:root[data-theme="light"] .km-art,
+:root[data-theme="sand"] .km-art {
     filter: drop-shadow(0 0 0.6px rgba(20, 28, 40, 0.75)) drop-shadow(0 1px 2px rgba(20, 28, 40, 0.35));
 }
 
 /* Custom place label, positioned around the marker's clickable centre. */
 .km-label {
-    --km-gap: calc(var(--km-hit) + 6px);
+    --km-gap: calc(var(--km-hit) * var(--km-scale, 1) + 6px);
     position: absolute;
-    left: calc(var(--km-ax) + var(--km-hx));
-    top: calc(var(--km-ay) + var(--km-hy));
+    left: calc(var(--km-ax) + var(--km-hx) * var(--km-scale, 1));
+    top: calc(var(--km-ay) + var(--km-hy) * var(--km-scale, 1));
     max-width: 240px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -832,10 +901,10 @@ html, body {
 .km-draft .km-inner::after {
     content: "";
     position: absolute;
-    left: calc(var(--km-ax, 50%) + var(--km-hx, 0px));
-    top: calc(var(--km-ay, 50%) + var(--km-hy, 0px));
-    width: calc(var(--km-hit) * 2 + 16px);
-    height: calc(var(--km-hit) * 2 + 16px);
+    left: calc(var(--km-ax, 50%) + var(--km-hx, 0px) * var(--km-scale, 1));
+    top: calc(var(--km-ay, 50%) + var(--km-hy, 0px) * var(--km-scale, 1));
+    width: calc(var(--km-hit) * var(--km-scale, 1) * 2 + 16px);
+    height: calc(var(--km-hit) * var(--km-scale, 1) * 2 + 16px);
     transform: translate(-50%, -50%);
     border-radius: 50%;
     border: 2px solid var(--atlas-accent);
@@ -958,6 +1027,8 @@ html, body {
     top: 16px;
     left: 16px;
     z-index: 1001;
+    display: flex;
+    gap: 0.5rem;
 }
 
 .atlas-map-options-toggle {
@@ -1075,6 +1146,70 @@ html, body {
 
 /* ---------- Small screens: panel becomes a bottom sheet ---------- */
 
+/* ---------- PNG export ---------- */
+
+/* The area that will be saved; everything outside it is dimmed. The map stays draggable underneath. */
+.atlas-export-frame {
+    position: absolute;
+    z-index: 640;
+    pointer-events: none;
+    border: 2px dashed var(--atlas-accent);
+    border-radius: 2px;
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+}
+
+.atlas-export-bar {
+    position: absolute;
+    left: 16px;
+    bottom: 16px;
+    z-index: 1001;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: calc(100% - var(--panel-width) - 32px);
+    padding: 0.55rem 0.7rem;
+    border-radius: 14px;
+    background: var(--atlas-panel);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--atlas-border);
+    box-shadow: var(--atlas-shadow);
+    color: var(--atlas-text);
+    font-size: 0.85rem;
+}
+
+.atlas.panel-closed .atlas-export-bar {
+    max-width: calc(100% - 32px);
+}
+
+.atlas-export-bar strong {
+    font-weight: 600;
+    margin-right: 0.25rem;
+}
+
+.atlas-export-bar select {
+    width: auto;
+    font-size: 0.85rem;
+}
+
+.atlas-export-bar .atlas-export-hint {
+    flex-basis: 100%;
+    color: var(--atlas-muted);
+    font-size: 0.76rem;
+}
+
+.atlas-export-bar .atlas-export-error {
+    flex-basis: 100%;
+    color: var(--atlas-danger);
+    font-size: 0.78rem;
+}
+
+/* Hide the map's own controls while framing the picture. */
+.atlas-exporting .leaflet-control-container,
+.atlas-exporting .atlas-map-options {
+    display: none;
+}
+
 @media (max-width: 720px) {
     .atlas {
         --sheet-height: 60vh;
@@ -1107,6 +1242,16 @@ html, body {
 
     .atlas.panel-closed .atlas-panel-toggle {
         bottom: 24px;
+    }
+
+    .atlas-export-bar,
+    .atlas.panel-closed .atlas-export-bar {
+        max-width: calc(100% - 32px);
+        bottom: calc(var(--sheet-height) + 12px);
+    }
+
+    .atlas.panel-closed .atlas-export-bar {
+        bottom: 16px;
     }
 
     .atlas-pick-banner,
