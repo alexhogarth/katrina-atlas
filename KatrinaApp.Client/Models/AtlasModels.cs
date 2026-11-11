@@ -6,6 +6,7 @@ public enum MapTheme
     Dark,
     Emerald,
     Navy,
+    Blue,
     Midnight,
     Sand,
 }
@@ -40,6 +41,8 @@ public sealed class MapSettings
     /// and grow / shrink with the map when zooming. Null means markers stay a fixed size on screen.
     /// </summary>
     public double? MarkerZoom { get; set; }
+    /// <summary>Longitude placed in the middle of exported images (0 = Greenwich, so the UK is central).</summary>
+    public double ExportCenterLongitude { get; set; }
 
     public MapSettings Clone() => (MapSettings)MemberwiseClone();
 }

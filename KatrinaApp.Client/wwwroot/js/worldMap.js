@@ -2,7 +2,7 @@
 // Requires the global `L` (wwwroot/lib/leaflet) and, for the vector basemap, `maplibregl` plus the
 // Leaflet bridge `L.maplibreGL` (wwwroot/lib/maplibre). Without WebGL it falls back to raster tiles.
 
-const THEMES = ['light', 'dark', 'emerald', 'navy', 'midnight', 'sand'];
+const THEMES = ['light', 'dark', 'emerald', 'navy', 'blue', 'midnight', 'sand'];
 // Themes with a pale basemap: markers get a soft outline (matches the .km-art rule in atlas.css).
 const PALE_THEMES = new Set(['light', 'sand']);
 const LABEL_POSITIONS = new Set(['right', 'left', 'above', 'below']);
@@ -37,6 +37,12 @@ const PALETTES = {
         land: '#123653', water: '#051c2c', ice: '#1b4467', park: '#143b59', building: '#183f5e',
         road: '#1e4a6d', roadMinor: '#1a4262', border: '#3d6f96', state: '#24506f',
         countryText: '#9db8cf', cityText: '#e3edf5', townText: '#a9c0d3', halo: 'rgba(5,28,44,0.9)',
+    },
+    // A brighter, lighter take on navy.
+    blue: {
+        land: '#24609a', water: '#0b3d6e', ice: '#3572aa', park: '#2a679f', building: '#2c6aa3',
+        road: '#3474ad', roadMinor: '#2f6ca4', border: '#6fa3d3', state: '#3f7bb3',
+        countryText: '#cfe2f3', cityText: '#f0f6fc', townText: '#c3d8ec', halo: 'rgba(11,61,110,0.9)',
     },
     midnight: {
         land: '#1b1e3a', water: '#070818', ice: '#262a4d', park: '#1e2240', building: '#22264a',
@@ -190,6 +196,7 @@ const RASTER = {
     dark: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
     emerald: { base: 'World_Dark_Gray_Base', labels: null },
     navy: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
+    blue: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
     midnight: { base: 'World_Dark_Gray_Base', labels: 'World_Dark_Gray_Reference' },
     sand: { base: 'World_Light_Gray_Base', labels: 'World_Light_Gray_Reference' },
 };
@@ -475,7 +482,7 @@ export function createMap(element, dotnet, options) {
 
     // ---------- PNG export ----------
 
-    let exportFrame = null; // { el, aspect }
+    let exportFrame = null; // { el, world, aspect, centerLng, rect }
 
     // The part of the map not covered by the side panel / bottom sheet.
     function visibleArea() {
@@ -509,25 +516,79 @@ export function createMap(element, dotnet, options) {
         const r = frameRect(exportFrame.aspect);
         Object.assign(exportFrame.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
         exportFrame.rect = r;
+        updateWorldMask();
     }
 
-    function startExport(aspect) {
+    // The export shows one copy of the world, from centerLng - 180° to centerLng + 180°.
+    // Inside the frame, everything outside that copy is covered in plain sea colour.
+    function worldRectInContainer() {
+        const r = exportFrame.rect;
+        const frameLng = map.containerPointToLatLng([r.x + r.w / 2, r.y + r.h / 2]).lng;
+        const lng = nearestLng(exportFrame.centerLng, frameLng);
+        const nw = map.latLngToContainerPoint([85.0511, lng - 180]);
+        const se = map.latLngToContainerPoint([-85.0511, lng + 180]);
+        return { x: nw.x, y: nw.y, w: se.x - nw.x, h: se.y - nw.y, centerX: (nw.x + se.x) / 2 };
+    }
+
+    function updateWorldMask() {
+        if (!exportFrame?.rect) return;
+        const r = exportFrame.rect;
+        const w = worldRectInContainer();
+        exportFrame.el.style.setProperty('--export-sea', (PALETTES[theme] ?? PALETTES.light).water);
+        Object.assign(exportFrame.world.style, {
+            left: `${w.x - r.x}px`, top: `${w.y - r.y}px`, width: `${w.w}px`, height: `${w.h}px`,
+        });
+    }
+
+    // Keeps the chosen centre longitude in the middle of the frame (vertical panning is still free).
+    function snapToCenter(animate = true) {
+        if (!exportFrame?.rect) return;
+        const r = exportFrame.rect;
+        const dx = worldRectInContainer().centerX - (r.x + r.w / 2);
+        if (Math.abs(dx) > 0.5) map.panBy([dx, 0], { animate, duration: 0.3 });
+    }
+
+    // Deferred: panning from inside Leaflet's own moveend (e.g. while drag inertia stops) would recurse.
+    let snapTimer = 0;
+    const onExportMoveEnd = () => {
+        clearTimeout(snapTimer);
+        snapTimer = setTimeout(() => snapToCenter(true), 80);
+    };
+
+    function startExport(aspect, centerLng) {
         if (!exportFrame) {
             const el = document.createElement('div');
             el.className = 'atlas-export-frame';
+            const world = document.createElement('div');
+            world.className = 'atlas-export-world';
+            el.appendChild(world);
             element.appendChild(el);
-            exportFrame = { el, aspect };
+            exportFrame = { el, world, aspect, centerLng: 0 };
             // Let the map zoom out far enough to fit the whole world into a wide banner.
             map.setMinZoom(0);
             map.on('resize', layoutFrame);
+            map.on('move zoom', updateWorldMask);
+            map.on('moveend', onExportMoveEnd);
         }
         exportFrame.aspect = aspect;
+        exportFrame.centerLng = normalizeLng(centerLng ?? 0);
         layoutFrame();
+        snapToCenter(false);
+    }
+
+    function setExportCenter(centerLng) {
+        if (!exportFrame) return;
+        exportFrame.centerLng = normalizeLng(centerLng);
+        updateWorldMask();
+        snapToCenter(true);
     }
 
     function endExport() {
         if (!exportFrame) return;
         map.off('resize', layoutFrame);
+        map.off('move zoom', updateWorldMask);
+        map.off('moveend', onExportMoveEnd);
+        clearTimeout(snapTimer);
         exportFrame.el.remove();
         exportFrame = null;
         map.setMinZoom(2);
@@ -535,18 +596,34 @@ export function createMap(element, dotnet, options) {
     }
 
     // Fit every saved place inside the export frame.
+    // Zooms so every place fits inside the frame, with the chosen longitude kept in the middle.
     function fitToFrame() {
         const points = [...markers.values()].map(e => e.marker.getLatLng());
         if (!exportFrame || points.length === 0) return;
-        const size = map.getSize();
         const r = exportFrame.rect;
-        const pad = Math.min(60, r.w * 0.06, r.h * 0.12);
-        map.fitBounds(L.latLngBounds(points), {
-            paddingTopLeft: [r.x + pad, r.y + pad],
-            paddingBottomRight: [size.x - r.x - r.w + pad, size.y - r.y - r.h + pad],
-            maxZoom: 6,
-            animate: true,
-        });
+        const c = exportFrame.centerLng;
+        const pad = Math.min(60, r.w * 0.06, r.h * 0.14);
+
+        // Positions as fractions of the world's width/height (independent of zoom).
+        const xs = points.map(p => Math.abs(normalizeLng(p.lng - c)) / 360);
+        const ys = points.map(p => mercatorY(p.lat));
+        const yMin = Math.min(...ys);
+        const yMax = Math.max(...ys);
+        const halfW = Math.max(...xs);
+        const worldForWidth = halfW > 0 ? (r.w / 2 - pad) / halfW : Infinity;
+        const worldForHeight = yMax > yMin ? (r.h - pad * 2) / (yMax - yMin) : Infinity;
+        // Never zoom out so far that the world is smaller than the frame's height, nor in past zoom 6.
+        let worldPx = Math.min(worldForWidth, worldForHeight, 256 * Math.pow(2, 6));
+        if (!Number.isFinite(worldPx)) worldPx = 256 * Math.pow(2, 4);
+        const zoom = Math.max(0, Math.log2(worldPx / 256));
+
+        // Put the middle of the places at the frame's centre, then shift for the frame's offset in the map.
+        const midY = (yMin + yMax) / 2;
+        const scale = 256 * Math.pow(2, zoom);
+        const frameCenter = L.point(r.x + r.w / 2, r.y + r.h / 2);
+        const offset = map.getSize().divideBy(2).subtract(frameCenter);
+        const target = L.point((normalizeLng(c) + 180) / 360 * scale, midY * scale).add(offset);
+        map.setView(map.unproject(target, zoom), zoom, { animate: true });
     }
 
     // Renders exactly what is inside the export frame to a width×height PNG and downloads it.
@@ -554,7 +631,9 @@ export function createMap(element, dotnet, options) {
         const r = exportFrame?.rect ?? { ...visibleArea() };
         const factor = width / r.w;
         const zoom = map.getZoom() + Math.log2(factor);
-        const center = map.containerPointToLatLng([r.x + r.w / 2, r.y + r.h / 2]);
+        const frameCenter = map.containerPointToLatLng([r.x + r.w / 2, r.y + r.h / 2]);
+        // Horizontally the picture is always centred on the chosen longitude, so there's exactly one world.
+        const center = L.latLng(frameCenter.lat, exportFrame ? exportFrame.centerLng : frameCenter.lng);
         // Markers keep their on-screen proportions to the map, just at the export's resolution.
         const markerScale = factor * markerScaleAt(map.getZoom());
         const palette = PALETTES[theme] ?? PALETTES.light;
@@ -591,6 +670,18 @@ export function createMap(element, dotnet, options) {
             };
         }
 
+        if (exportFrame) {
+            // Cover the repeated copies of the world (and anything past the poles) with sea.
+            const worldSize = 256 * Math.pow(2, zoom);
+            const left = width / 2 - worldSize / 2;
+            const top = height / 2 - mercatorY(center.lat) * worldSize;
+            ctx.fillStyle = palette.water;
+            ctx.fillRect(0, 0, Math.max(0, left), height);
+            ctx.fillRect(left + worldSize, 0, Math.max(0, width - left - worldSize), height);
+            ctx.fillRect(0, 0, width, Math.max(0, top));
+            ctx.fillRect(0, top + worldSize, width, Math.max(0, height - top - worldSize));
+        }
+
         const list = [...markers.values()].map(e => e.data)
             .sort((a, b) => Number(a.selected) - Number(b.selected));
         const rootStyle = getComputedStyle(document.documentElement);
@@ -611,7 +702,7 @@ export function createMap(element, dotnet, options) {
                 drawLabel(ctx, m, p, markerScale, factor, labelStyle);
             }
         }
-        drawAttribution(ctx, width, height, factor, glLayer ? '© OpenStreetMap contributors · OpenFreeMap' : '© Esri, OpenStreetMap contributors', palette);
+        drawAttribution(ctx, width, height, glLayer ? '© OpenStreetMap contributors · OpenFreeMap' : '© Esri, OpenStreetMap contributors', palette);
 
         const blob = await new Promise((resolve, reject) =>
             canvas.toBlob(b => (b ? resolve(b) : reject(new Error('The browser could not create the image.'))), 'image/png'));
@@ -697,14 +788,15 @@ export function createMap(element, dotnet, options) {
         ctx.restore();
     }
 
-    function drawAttribution(ctx, width, height, factor, text, palette) {
+    // Small, faint credit: 7px on a 1584px-wide banner, scaled with the image width.
+    function drawAttribution(ctx, width, height, text, palette) {
         ctx.save();
-        const size = Math.max(9, 9 * Math.min(factor, 2));
+        const size = Math.max(6, 7 * width / 1584);
         ctx.font = `${size}px sans-serif`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
         ctx.fillStyle = palette.countryText;
-        ctx.globalAlpha = 0.55;
+        ctx.globalAlpha = 0.45;
         ctx.fillText(text, width - size * 0.6, height - size * 0.4);
         ctx.restore();
     }
@@ -712,6 +804,7 @@ export function createMap(element, dotnet, options) {
     return {
         getZoom: () => map.getZoom(),
         startExport,
+        setExportCenter,
         endExport,
         fitToFrame,
         exportPng,
@@ -805,4 +898,19 @@ function renderBasemap(width, height, center, leafletZoom, style) {
         glMap.once('idle', finish);
         glMap.on('error', e => console.warn('Export basemap:', e?.error?.message ?? e));
     });
+}
+
+function normalizeLng(lng) {
+    return ((((lng + 180) % 360) + 360) % 360) - 180;
+}
+
+// The copy of `lng` (± 360°) closest to `near`.
+function nearestLng(lng, near) {
+    return lng + Math.round((near - lng) / 360) * 360;
+}
+
+// Web Mercator y as a fraction of the world's height (0 = top, 1 = bottom).
+function mercatorY(lat) {
+    const s = Math.sin(Math.max(-85.0511, Math.min(85.0511, lat)) * Math.PI / 180);
+    return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
 }

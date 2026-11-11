@@ -9,6 +9,25 @@
             <option value="@preset.Key">@preset.Label</option>
         }
     </select>
+    <label>
+        Centre on
+        <select class="form-select form-select-sm" value="@CenterKey" @onchange="ChangeCenterAsync" disabled="@Busy">
+            @foreach (var c in Centers)
+            {
+                <option value="@c.Key">@c.Label</option>
+            }
+            <option value="custom">Custom longitude…</option>
+        </select>
+    </label>
+    @if (CenterKey == "custom")
+    {
+        <label>
+            <input type="number" class="form-control form-control-sm" min="-180" max="180" step="1"
+                   value="@CenterLongitude.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)"
+                   @onchange="ChangeCustomCenterAsync" disabled="@Busy" aria-label="Centre longitude in degrees" />
+            °E
+        </label>
+    }
     <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnFit" disabled="@Busy" title="Fit all your places into the frame">
         ⤢ Fit my places
     </button>
@@ -16,7 +35,7 @@
         @(Busy ? "Saving…" : "Download PNG")
     </button>
     <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnCancel" disabled="@Busy">Done</button>
-    <span class="atlas-export-hint">Drag and zoom the map to frame the picture. Everything inside the dashed box is saved.</span>
+    <span class="atlas-export-hint">Zoom and drag up or down to frame the picture; it stays centred on the place you choose. Everything inside the dashed box is saved.</span>
     @if (!string.IsNullOrEmpty(Message))
     {
         <span class="atlas-export-error" role="alert">@Message</span>
@@ -37,6 +56,30 @@
         new("square", "Square (2048 × 2048)", 2048, 2048, "square"),
     ];
 
+    public sealed record CenterOption(string Key, string Label, double Longitude);
+
+    /// <summary>Longitudes to centre the picture on (negative = west).</summary>
+    public static IReadOnlyList<CenterOption> Centers { get; } =
+    [
+        new("uk", "UK (Greenwich, 0°)", 0),
+        new("americas", "The Americas (80°W)", -80),
+        new("europe", "Europe & Africa (20°E)", 20),
+        new("india", "India (78°E)", 78),
+        new("asia", "East Asia (110°E)", 110),
+        new("australia", "Australia (134°E)", 134),
+        new("pacific", "Pacific (180°)", 180),
+    ];
+
+    private bool customChosen;
+
+    private string CenterKey =>
+        !customChosen && Centers.FirstOrDefault(c => Math.Abs(c.Longitude - CenterLongitude) < 0.01
+                                                    || Math.Abs(Math.Abs(c.Longitude) - 180) < 0.01 && Math.Abs(Math.Abs(CenterLongitude) - 180) < 0.01) is { } match
+            ? match.Key
+            : "custom";
+
+    [Parameter] public double CenterLongitude { get; set; }
+    [Parameter] public EventCallback<double> OnCenterChanged { get; set; }
     [Parameter, EditorRequired] public ExportPreset Preset { get; set; } = default!;
     [Parameter] public bool Busy { get; set; }
     [Parameter] public string? Message { get; set; }
@@ -44,6 +87,21 @@
     [Parameter] public EventCallback OnFit { get; set; }
     [Parameter] public EventCallback OnDownload { get; set; }
     [Parameter] public EventCallback OnCancel { get; set; }
+
+    private Task ChangeCenterAsync(ChangeEventArgs e)
+    {
+        var key = e.Value as string;
+        customChosen = key == "custom";
+        return Centers.FirstOrDefault(c => c.Key == key) is { } center
+            ? OnCenterChanged.InvokeAsync(center.Longitude)
+            : Task.CompletedTask;
+    }
+
+    private Task ChangeCustomCenterAsync(ChangeEventArgs e) =>
+        double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var longitude) && longitude is >= -180 and <= 180
+            ? OnCenterChanged.InvokeAsync(longitude)
+            : Task.CompletedTask;
 
     private Task ChangePresetAsync(ChangeEventArgs e) =>
         Presets.FirstOrDefault(p => p.Key == e.Value as string) is { } preset

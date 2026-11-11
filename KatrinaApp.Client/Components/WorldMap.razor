@@ -124,11 +124,20 @@
         map is null ? 2.5 : await map.InvokeAsync<double>("getZoom");
 
     /// <summary>Shows the export frame (width / height = <paramref name="aspect"/>) over the map.</summary>
-    public async Task StartExportAsync(double aspect)
+    public async Task StartExportAsync(double aspect, double centerLongitude)
     {
         if (map is not null)
         {
-            await map.InvokeVoidAsync("startExport", aspect);
+            await map.InvokeVoidAsync("startExport", aspect, centerLongitude);
+        }
+    }
+
+    /// <summary>Changes the longitude kept in the middle of the export frame.</summary>
+    public async Task SetExportCenterAsync(double longitude)
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("setExportCenter", longitude);
         }
     }
 

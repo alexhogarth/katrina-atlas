@@ -75,6 +75,24 @@
     --atlas-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
+:root[data-theme="blue"] {
+    --atlas-bg: #072b4f;
+    --atlas-map-bg: #0b3d6e;
+    --atlas-panel: rgba(10, 52, 94, 0.9);
+    --atlas-panel-solid: #0d3a69;
+    --atlas-text: #eef5fc;
+    --atlas-muted: #a5c3df;
+    --atlas-border: rgba(180, 215, 245, 0.15);
+    --atlas-card: rgba(180, 215, 245, 0.06);
+    --atlas-card-hover: rgba(180, 215, 245, 0.12);
+    --atlas-accent: #4fc3ff;
+    --atlas-accent-soft: rgba(79, 195, 255, 0.18);
+    --atlas-accent-contrast: #062440;
+    --atlas-danger: #ff8a8a;
+    --atlas-stage: radial-gradient(circle at 50% 45%, #2f73b3 0%, #0b3d6e 75%);
+    --atlas-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
 :root[data-theme="midnight"] {
     --atlas-bg: #05060f;
     --atlas-map-bg: #070818;
@@ -252,7 +270,7 @@ html, body {
 
 .atlas-theme-switch {
     display: grid;
-    grid-template-columns: repeat(3, auto);
+    grid-template-columns: repeat(4, auto);
     gap: 4px;
     border-radius: 14px;
 }
@@ -1156,6 +1174,13 @@ html, body {
     border: 2px dashed var(--atlas-accent);
     border-radius: 2px;
     box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+
+/* One copy of the world; repeats beside it are covered with sea, as in the saved image. */
+.atlas-export-world {
+    position: absolute;
+    box-shadow: 0 0 0 100000px var(--export-sea, #000);
 }
 
 .atlas-export-bar {
@@ -1189,6 +1214,18 @@ html, body {
 
 .atlas-export-bar select {
     width: auto;
+    font-size: 0.85rem;
+}
+
+.atlas-export-bar label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--atlas-muted);
+}
+
+.atlas-export-bar input[type="number"] {
+    width: 5.5rem;
     font-size: 0.85rem;
 }
 

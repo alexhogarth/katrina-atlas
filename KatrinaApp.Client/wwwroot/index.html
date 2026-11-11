@@ -12,7 +12,7 @@
         (function () {
             try {
                 var t = localStorage.getItem('katrina-atlas.theme');
-                if (['light', 'dark', 'emerald', 'navy', 'midnight', 'sand'].indexOf(t) < 0) {
+                if (['light', 'dark', 'emerald', 'navy', 'blue', 'midnight', 'sand'].indexOf(t) < 0) {
                     t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 }
                 document.documentElement.dataset.theme = t;
