@@ -1,0 +1,162 @@
+@* Colour wheel (hue around the circle, saturation outwards) + brightness slider, hex box and quick swatches. *@
+@using System.Globalization
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="atlas-color-picker">
+    <div class="atlas-wheel" @ref="wheel" role="slider" tabindex="0"
+         aria-label="Colour wheel" aria-valuetext="@(Value ?? "mixed")"
+         style="--wheel-dim: @((1 - val).ToString("0.###", CultureInfo.InvariantCulture))"
+         @onpointerdown="PointerDownAsync" @onpointermove="PointerMoveAsync" @onpointerup="PointerUp"
+         @onpointercancel="PointerUp" @onkeydown="KeyDownAsync">
+        <span class="atlas-wheel-dim"></span>
+        @if (Value is not null)
+        {
+            <span class="atlas-wheel-thumb" style="@ThumbStyle"></span>
+        }
+    </div>
+
+    <div class="atlas-color-side">
+        <div class="atlas-color-current">
+            <span class="atlas-color-chip" style="--swatch: @(Value ?? "transparent")"></span>
+            <input class="form-control form-control-sm" value="@(Value ?? "")" placeholder="mixed" maxlength="7"
+                   aria-label="Colour hex code" spellcheck="false" @onchange="HexChangedAsync" />
+        </div>
+        <label class="atlas-slider atlas-brightness">
+            <span>Brightness <em>@val.ToString("0%")</em></span>
+            <input type="range" min="0" max="1" step="0.01" value="@val.ToString(CultureInfo.InvariantCulture)"
+                   style="--bright-to: @HsvToHex(hue, sat, 1)" @oninput="BrightnessInputAsync" aria-label="Brightness" />
+        </label>
+        <div class="atlas-colors">
+            @foreach (var swatch in Swatches)
+            {
+                <button type="button" class="atlas-swatch @(string.Equals(Value, swatch, StringComparison.OrdinalIgnoreCase) ? "active" : null)"
+                        style="--swatch:@swatch" title="@swatch" aria-label="Colour @swatch"
+                        @onclick="() => PickAsync(swatch)"></button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    public static readonly string[] Swatches =
+    [
+        "#ffffff", "#b8ffe0", "#ffd76a", "#ff9f43", "#ff6b6b",
+        "#ff8fd8", "#b28dff", "#6bc5ff", "#2ecc71", "#1b1b1b",
+    ];
+
+    private ElementReference wheel;
+    private IJSObjectReference? helpers;
+    private bool dragging;
+    private double wheelSize;
+    private double hue = 45, sat = 0.58, val = 1;
+    private string? shownValue;
+
+    /// <summary>The current colour (#rrggbb), or null when several different colours are selected.</summary>
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> OnPick { get; set; }
+
+    private static string HsvToHex(double h, double s, double v) => ColorMath.HsvToHex(h, s, v);
+
+    protected override void OnParametersSet()
+    {
+        // Only re-derive H/S/V when the colour changed from outside, so hue survives dragging to grey/black.
+        if (Value is not null && !string.Equals(Value, shownValue, StringComparison.OrdinalIgnoreCase))
+        {
+            var (h, s, v) = ColorMath.HexToHsv(Value);
+            if (s > 0.001 && v > 0.001) hue = h;
+            if (v > 0.001) sat = s;
+            val = v;
+        }
+        shownValue = Value;
+    }
+
+    private string ThumbStyle
+    {
+        get
+        {
+            var a = hue * Math.PI / 180;
+            var x = 50 + Math.Sin(a) * sat * 50;
+            var y = 50 - Math.Cos(a) * sat * 50;
+            return string.Create(CultureInfo.InvariantCulture, $"left:{x:0.##}%;top:{y:0.##}%;--swatch:{Value}");
+        }
+    }
+
+    private async Task PointerDownAsync(PointerEventArgs e)
+    {
+        dragging = true;
+        try
+        {
+            helpers ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/atlas.js");
+            await helpers.InvokeVoidAsync("capturePointer", wheel, e.PointerId);
+            wheelSize = await helpers.InvokeAsync<double>("elementWidth", wheel);
+        }
+        catch (JSException) { }
+        await FromPointerAsync(e);
+    }
+
+    private Task PointerMoveAsync(PointerEventArgs e) => dragging ? FromPointerAsync(e) : Task.CompletedTask;
+
+    private void PointerUp() => dragging = false;
+
+    private async Task FromPointerAsync(PointerEventArgs e)
+    {
+        if (wheelSize <= 0) return;
+        var r = wheelSize / 2;
+        var dx = e.OffsetX - r;
+        var dy = e.OffsetY - r;
+        hue = (Math.Atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+        sat = Math.Clamp(Math.Sqrt(dx * dx + dy * dy) / r, 0, 1);
+        if (val < 0.05) val = 1; // Picking on the wheel while it's black would show nothing.
+        await EmitAsync();
+    }
+
+    private Task KeyDownAsync(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowLeft": hue = (hue + 355) % 360; break;
+            case "ArrowRight": hue = (hue + 5) % 360; break;
+            case "ArrowUp": sat = Math.Min(1, sat + 0.05); break;
+            case "ArrowDown": sat = Math.Max(0, sat - 0.05); break;
+            default: return Task.CompletedTask;
+        }
+        return EmitAsync();
+    }
+
+    private Task BrightnessInputAsync(ChangeEventArgs e)
+    {
+        if (!double.TryParse(e.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) return Task.CompletedTask;
+        val = Math.Clamp(v, 0, 1);
+        return EmitAsync();
+    }
+
+    private Task HexChangedAsync(ChangeEventArgs e)
+    {
+        var text = (e.Value?.ToString() ?? "").Trim();
+        if (!ColorMath.TryParseHex(text, out _)) return Task.CompletedTask;
+        var (h, s, v) = ColorMath.HexToHsv(text);
+        return PickAsync(ColorMath.HsvToHex(h, s, v));
+    }
+
+    private Task PickAsync(string hex)
+    {
+        shownValue = null; // re-derive H/S/V from the picked colour
+        return OnPick.InvokeAsync(hex.ToLowerInvariant());
+    }
+
+    private Task EmitAsync()
+    {
+        var hex = ColorMath.HsvToHex(hue, sat, val);
+        shownValue = hex;
+        return OnPick.InvokeAsync(hex);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (helpers is not null)
+        {
+            try { await helpers.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+    }
+}

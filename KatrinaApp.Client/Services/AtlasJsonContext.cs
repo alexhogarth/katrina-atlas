@@ -33,5 +33,8 @@ public sealed record MapMarkerDto(
 [JsonSerializable(typeof(MarkerStyle))]
 [JsonSerializable(typeof(MapSettings))]
 [JsonSerializable(typeof(List<MapMarkerDto>))]
+[JsonSerializable(typeof(AtlasDocument))]
+[JsonSerializable(typeof(List<AtlasMapInfo>))]
+[JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(MapMarkerDto))]
 public sealed partial class AtlasJsonContext : JsonSerializerContext;

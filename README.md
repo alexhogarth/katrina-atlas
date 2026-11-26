@@ -1,11 +1,13 @@
 # Katrina's Atlas
 
-A world map of the places you've lived and visited, with shooting stars, crosses, pins and more.
+A world map of the places you've lived, worked and visited, with shooting stars, crosses, pins and more.
 It's a standalone Blazor WebAssembly app, so it runs entirely in the browser and is hosted as static files.
 
 - Map: Leaflet + MapLibre GL with [OpenFreeMap](https://openfreemap.org) vector tiles (no API key)
 - Place search: [Nominatim](https://nominatim.openstreetmap.org) (OpenStreetMap)
-- Storage: the browser's `localStorage`. Places are saved per browser and device, so clearing site data deletes them.
+- Storage: the browser's `localStorage`. Maps are saved per browser and device, so clearing site data deletes them.
+  You can keep several maps; each is stored under its own key, and `?map=<id>` in the address opens a given map,
+  so different tabs can edit different maps side by side. "Save to file" / "Open file…" back maps up as `.atlas.json`.
 
 ## Run locally
 

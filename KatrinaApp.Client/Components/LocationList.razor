@@ -1,6 +1,6 @@
 @using System.Globalization
 
-<div class="atlas-list">
+<div class="atlas-list @(SelectMode ? "atlas-list-selecting" : null)">
     @if (Locations.Count == 0)
     {
         <div class="atlas-empty">
@@ -8,20 +8,36 @@
                 <MarkerPreview Style="emptyStyle" IdPrefix="empty-art" />
             </div>
             <p>No places yet.</p>
-            <p class="atlas-hint">Add everywhere you've lived or visited and watch the map light up.</p>
+            <p class="atlas-hint">Add everywhere you've lived, worked or visited and watch the map light up.</p>
         </div>
     }
     else
     {
         @foreach (var group in Groups)
         {
-            <div class="atlas-group-title">@group.Title <span>@group.Items.Count</span></div>
+            <div class="atlas-group-title">
+                <span>@group.Title <span class="atlas-group-count">@group.Items.Count</span></span>
+                @if (SelectMode)
+                {
+                    var allIn = group.Items.All(l => PickedIds.Contains(l.Id));
+                    <button type="button" class="atlas-link-btn" @onclick="() => OnToggleMany.InvokeAsync((group.Items, !allIn))">
+                        @(allIn ? "Unselect all" : "Select all")
+                    </button>
+                }
+            </div>
             <ul>
                 @foreach (var location in group.Items)
                 {
-                    <li id="loc-@location.Id.ToString("N")" class="atlas-item @(location.Id == SelectedId ? "selected" : null)">
-                        <button type="button" class="atlas-item-main" @onclick="() => OnSelect.InvokeAsync(location)"
-                                title="Show on map">
+                    var picked = PickedIds.Contains(location.Id);
+                    <li id="loc-@location.Id.ToString("N")"
+                        class="atlas-item @(location.Id == SelectedId || picked ? "selected" : null) @(picked ? "picked" : null)">
+                        <button type="button" class="atlas-item-main" @onclick="e => ItemClickAsync(location, e)"
+                                title="@(SelectMode ? "Select" : "Show on map (Ctrl/⌘ or Shift + click to select several)")"
+                                aria-pressed="@(SelectMode ? picked : null)">
+                            @if (SelectMode)
+                            {
+                                <span class="atlas-check @(picked ? "on" : null)" aria-hidden="true">@(picked ? "✓" : "")</span>
+                            }
                             <MarkerPreview Style="location.Style" IdPrefix="@($"li-{location.Id:N}")" Compact="true" Class="atlas-item-icon" />
                             <span class="atlas-item-text">
                                 <strong>@location.Name</strong>
@@ -32,10 +48,13 @@
                                 <small>@FormatCoords(location)</small>
                             </span>
                         </button>
-                        <button type="button" class="atlas-icon-btn" title="Edit" aria-label="Edit @location.Name"
-                                @onclick="() => OnEdit.InvokeAsync(location)">✎</button>
-                        <button type="button" class="atlas-icon-btn danger" title="Remove" aria-label="Remove @location.Name"
-                                @onclick="() => OnDelete.InvokeAsync(location)">🗑</button>
+                        @if (!SelectMode)
+                        {
+                            <button type="button" class="atlas-icon-btn" title="Edit" aria-label="Edit @location.Name"
+                                    @onclick="() => OnEdit.InvokeAsync(location)">✎</button>
+                            <button type="button" class="atlas-icon-btn danger" title="Remove" aria-label="Remove @location.Name"
+                                    @onclick="() => OnDelete.InvokeAsync(location)">🗑</button>
+                        }
                     </li>
                 }
             </ul>
@@ -48,13 +67,25 @@
 
     [Parameter, EditorRequired] public IReadOnlyList<TravelLocation> Locations { get; set; } = [];
     [Parameter] public Guid? SelectedId { get; set; }
+    /// <summary>Places ticked for changing together.</summary>
+    [Parameter] public IReadOnlySet<Guid> PickedIds { get; set; } = new HashSet<Guid>();
+    /// <summary>When true, clicking a place ticks / unticks it instead of showing it.</summary>
+    [Parameter] public bool SelectMode { get; set; }
     [Parameter] public EventCallback<TravelLocation> OnSelect { get; set; }
+    [Parameter] public EventCallback<TravelLocation> OnToggle { get; set; }
+    [Parameter] public EventCallback<(List<TravelLocation> Items, bool Select)> OnToggleMany { get; set; }
     [Parameter] public EventCallback<TravelLocation> OnEdit { get; set; }
     [Parameter] public EventCallback<TravelLocation> OnDelete { get; set; }
 
+    private Task ItemClickAsync(TravelLocation location, MouseEventArgs e) =>
+        SelectMode || e.CtrlKey || e.MetaKey || e.ShiftKey
+            ? OnToggle.InvokeAsync(location)
+            : OnSelect.InvokeAsync(location);
+
     private IEnumerable<(string Title, List<TravelLocation> Items)> Groups =>
-        new[] { (Kind: VisitKind.Lived, Title: "🏡 Lived"), (Kind: VisitKind.Visited, Title: "✈️ Visited") }
-            .Select(g => (g.Title, Items: Locations.Where(l => l.Kind == g.Kind).OrderBy(l => l.Name, StringComparer.CurrentCultureIgnoreCase).ToList()))
+        VisitKinds.All
+            .Select(kind => (Title: VisitKinds.Label(kind),
+                Items: Locations.Where(l => l.Kind == kind).OrderBy(l => l.Name, StringComparer.CurrentCultureIgnoreCase).ToList()))
             .Where(g => g.Items.Count > 0);
 
     private static string FormatCoords(TravelLocation l) =>

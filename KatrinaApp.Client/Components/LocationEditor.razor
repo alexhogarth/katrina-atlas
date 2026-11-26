@@ -98,12 +98,12 @@
         }
 
         <div class="atlas-field-label mt-3">This is somewhere I've…</div>
-        <div class="atlas-segmented" role="radiogroup">
-            @foreach (var kind in Enum.GetValues<VisitKind>())
+        <div class="atlas-segmented atlas-segmented-3" role="radiogroup">
+            @foreach (var kind in VisitKinds.All)
             {
                 <button type="button" role="radio" aria-checked="@(Draft.Kind == kind)"
                         class="@(Draft.Kind == kind ? "active" : null)" @onclick="() => SetKind(kind)">
-                    @(kind == VisitKind.Lived ? "🏡 Lived" : "✈️ Visited")
+                    @VisitKinds.Label(kind)
                 </button>
             }
         </div>

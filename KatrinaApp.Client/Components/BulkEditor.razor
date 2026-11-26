@@ -1,0 +1,154 @@
+@* Changes the look (and type) of several places at once. Edits apply live; "Undo" restores how they looked when selected. *@
+@using System.Globalization
+
+<section class="atlas-bulk" aria-label="Edit selected places">
+    <div class="atlas-bulk-head">
+        <strong>@Items.Count @(Items.Count == 1 ? "place" : "places") selected</strong>
+        <span class="flex-grow-1"></span>
+        @if (Items.Count < TotalCount)
+        {
+            <button type="button" class="atlas-link-btn" @onclick="OnSelectAll">Select all</button>
+        }
+        <button type="button" class="atlas-link-btn" @onclick="OnClear">Done</button>
+    </div>
+    <p class="atlas-hint mb-2">Changes apply to every selected place. Ctrl/⌘ or Shift + click pins to add or remove them, or Shift + drag on the map to select an area.</p>
+
+    <div class="atlas-field-label">Type</div>
+    <div class="atlas-segmented atlas-segmented-3 mb-3" role="radiogroup" aria-label="Type">
+        @foreach (var kind in VisitKinds.All)
+        {
+            var active = Items.All(l => l.Kind == kind);
+            <button type="button" role="radio" aria-checked="@active" class="@(active ? "active" : null)"
+                    @onclick="() => ApplyAsync(l => l.Kind = kind)">
+                @VisitKinds.Label(kind)
+            </button>
+        }
+    </div>
+
+    <div class="atlas-field-label">Marker</div>
+    <div class="atlas-shapes" role="radiogroup" aria-label="Marker type">
+        @foreach (var info in MarkerShapes.All)
+        {
+            var shapeStyle = Items[0].Style.Clone();
+            shapeStyle.Shape = info.Shape;
+            var active = Items.All(l => l.Style.Shape == info.Shape);
+            <button type="button" role="radio" aria-checked="@active" title="@info.Label"
+                    class="atlas-shape @(active ? "active" : null)" @onclick="() => SetShapeAsync(info.Shape)">
+                <MarkerPreview Style="shapeStyle" IdPrefix="@($"bulk-shape-{info.Shape}")" Compact="true" />
+                <span>@info.Label</span>
+            </button>
+        }
+    </div>
+
+    <div class="atlas-field-label">Colour @if (CommonColor is null) { <span class="atlas-optional">mixed</span> }</div>
+    <ColorPicker Value="@CommonColor" OnPick="c => ApplyAsync(l => l.Style.Color = c)" />
+
+    <div class="atlas-sliders">
+        @Slider("Size", s => s.Size, (s, v) => s.Size = v, 6, 64, 1, v => $"{v:0}px")
+        @Slider("Glow", s => s.Glow, (s, v) => s.Glow = v, 0, 1, 0.05, v => v.ToString("0%"))
+        @Slider("Opacity", s => s.Opacity, (s, v) => s.Opacity = v, 0.2, 1, 0.05, v => v.ToString("0%"))
+        @if (Items.All(l => MarkerShapes.Get(l.Style.Shape).UsesRotation))
+        {
+            @Slider("Rotation", s => s.Rotation, (s, v) => s.Rotation = v, 0, 359, 1, v => $"{v:0}°")
+        }
+        @if (Items.All(l => l.Style.Shape == MarkerShape.ShootingStar))
+        {
+            @Slider("Tail length", s => s.TailLength, (s, v) => s.TailLength = v, 0, 400, 1, v => $"{v:0}px")
+        }
+    </div>
+
+    <div class="atlas-style-footer">
+        <div class="form-check form-switch m-0">
+            <input class="form-check-input" type="checkbox" role="switch" id="atlas-bulk-animate"
+                   checked="@Items.All(l => l.Style.Animate)"
+                   @onchange="e => ApplyAsync(l => l.Style.Animate = e.Value is true)" />
+            <label class="form-check-label" for="atlas-bulk-animate">Twinkle</label>
+        </div>
+        <span class="flex-grow-1"></span>
+        <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="UndoAsync" disabled="@(!changed)"
+                title="Put the selected places back how they were">Undo</button>
+        <button type="button" class="btn btn-sm atlas-btn-danger" @onclick="OnDeleteAll">Delete</button>
+    </div>
+</section>
+
+@code {
+    private Dictionary<Guid, (MarkerStyle Style, VisitKind Kind)> snapshot = [];
+    private bool changed;
+
+    [Parameter, EditorRequired] public List<TravelLocation> Items { get; set; } = [];
+    [Parameter] public int TotalCount { get; set; }
+    /// <summary>Raised after the selected places were changed (so the map can be saved).</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+    [Parameter] public EventCallback OnSelectAll { get; set; }
+    [Parameter] public EventCallback OnClear { get; set; }
+    [Parameter] public EventCallback OnDeleteAll { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // Remember how newly selected places looked, so Undo can restore them.
+        foreach (var l in Items.Where(l => !snapshot.ContainsKey(l.Id)))
+        {
+            snapshot[l.Id] = (l.Style.Clone(), l.Kind);
+        }
+    }
+
+    private string? CommonColor
+    {
+        get
+        {
+            var first = MarkerSvgRenderer.SanitizeColor(Items[0].Style.Color);
+            return Items.All(l => string.Equals(MarkerSvgRenderer.SanitizeColor(l.Style.Color), first, StringComparison.OrdinalIgnoreCase))
+                ? first
+                : null;
+        }
+    }
+
+    private RenderFragment Slider(string title, Func<MarkerStyle, double> get, Action<MarkerStyle, double> set,
+        double min, double max, double step, Func<double, string> format) => __builder =>
+    {
+        var values = Items.Select(l => get(l.Style)).ToList();
+        var mixed = values.Max() - values.Min() > step / 2;
+        var value = values.Average();
+        <label class="atlas-slider">
+            <span>@title <em>@(mixed ? "mixed" : format(value))</em></span>
+            <input type="range" min="@Inv(min)" max="@Inv(max)" step="@Inv(step)" value="@Inv(value)"
+                   @oninput="e => SliderInputAsync(e, set)" />
+        </label>
+    };
+
+    private static string Inv(double d) => d.ToString(CultureInfo.InvariantCulture);
+
+    private Task SliderInputAsync(ChangeEventArgs e, Action<MarkerStyle, double> set) =>
+        double.TryParse(e.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v)
+            ? ApplyAsync(l => set(l.Style, v))
+            : Task.CompletedTask;
+
+    private Task SetShapeAsync(MarkerShape shape) => ApplyAsync(l =>
+    {
+        if (l.Style.Shape == shape) return;
+        l.Style.Shape = shape;
+        // Same default angles as the single-place editor's "Reset look".
+        l.Style.Rotation = shape switch { MarkerShape.ShootingStar => 330, MarkerShape.Plane => 45, _ => 0 };
+    });
+
+    private Task ApplyAsync(Action<TravelLocation> change)
+    {
+        foreach (var l in Items) change(l);
+        changed = true;
+        return OnChanged.InvokeAsync();
+    }
+
+    private Task UndoAsync()
+    {
+        foreach (var l in Items)
+        {
+            if (snapshot.TryGetValue(l.Id, out var before))
+            {
+                l.Style = before.Style.Clone();
+                l.Kind = before.Kind;
+            }
+        }
+        changed = false;
+        return OnChanged.InvokeAsync();
+    }
+}

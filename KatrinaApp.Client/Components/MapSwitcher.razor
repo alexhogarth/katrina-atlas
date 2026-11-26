@@ -1,0 +1,96 @@
+@* Chooses which saved map is open, and creates / renames / copies / deletes / saves / opens maps. *@
+
+<div class="atlas-maps @(open ? "open" : null)">
+    <button type="button" class="atlas-maps-toggle" @onclick="Toggle" aria-expanded="@open" aria-haspopup="true"
+            title="Your maps">
+        <span class="atlas-maps-icon" aria-hidden="true">🗺</span>
+        <span class="atlas-maps-name">@(Current?.Name ?? "…")</span>
+        <span class="atlas-maps-caret" aria-hidden="true">▾</span>
+    </button>
+
+    @if (open)
+    {
+        <div class="atlas-map-options-backdrop" @onclick="Close"></div>
+        <div class="atlas-maps-card" role="menu" @onkeydown="HandleKeyDown">
+            <div class="atlas-field-label">Your maps <span class="atlas-optional">saved in this browser</span></div>
+            <ul class="atlas-maps-list">
+                @foreach (var map in Maps)
+                {
+                    var current = map.Id == Current?.Id;
+                    <li class="@(current ? "current" : null)">
+                        <button type="button" role="menuitemradio" aria-checked="@current" class="atlas-maps-item"
+                                @onclick="() => RunAsync(OnSwitch, map)">
+                            <span class="atlas-maps-dot" aria-hidden="true">@(current ? "●" : "")</span>
+                            <span class="atlas-maps-item-name">@map.Name</span>
+                        </button>
+                        <button type="button" class="atlas-icon-btn" title="Open in a new tab (edit maps side by side)"
+                                aria-label="Open @map.Name in a new tab" @onclick="() => RunAsync(OnOpenInNewTab, map)">↗</button>
+                    </li>
+                }
+            </ul>
+            <div class="atlas-maps-actions">
+                <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="() => RunAsync(OnNew)">＋ New map</button>
+                <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="() => RunAsync(OnDuplicate)">⧉ Duplicate</button>
+                <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="() => RunAsync(OnRename)">✎ Rename</button>
+                <button type="button" class="btn btn-sm atlas-btn-ghost atlas-maps-danger" @onclick="() => RunAsync(OnDelete)">🗑 Delete</button>
+            </div>
+            <div class="atlas-field-label mt-2">Files <span class="atlas-optional">back up or move to another computer</span></div>
+            <div class="atlas-maps-actions">
+                <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="() => RunAsync(OnSaveFile)">⬇ Save to file</button>
+                <label class="btn btn-sm atlas-btn-ghost atlas-file-btn">
+                    ⬆ Open file…
+                    <InputFile accept=".json,application/json" OnChange="FileChosenAsync" />
+                </label>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool open;
+
+    [Parameter] public IReadOnlyList<AtlasMapInfo> Maps { get; set; } = [];
+    [Parameter] public AtlasMapInfo? Current { get; set; }
+    [Parameter] public EventCallback<AtlasMapInfo> OnSwitch { get; set; }
+    [Parameter] public EventCallback<AtlasMapInfo> OnOpenInNewTab { get; set; }
+    [Parameter] public EventCallback OnNew { get; set; }
+    [Parameter] public EventCallback OnDuplicate { get; set; }
+    [Parameter] public EventCallback OnRename { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+    [Parameter] public EventCallback OnSaveFile { get; set; }
+    [Parameter] public EventCallback<IBrowserFile> OnOpenFile { get; set; }
+    /// <summary>Raised when the menu opens, so the list can be refreshed (another tab may have changed it).</summary>
+    [Parameter] public EventCallback OnOpening { get; set; }
+
+    private async Task Toggle()
+    {
+        open = !open;
+        if (open) await OnOpening.InvokeAsync();
+    }
+
+    private void Close() => open = false;
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") open = false;
+    }
+
+    private Task RunAsync(EventCallback action)
+    {
+        open = false;
+        return action.InvokeAsync();
+    }
+
+    private Task RunAsync(EventCallback<AtlasMapInfo> action, AtlasMapInfo map)
+    {
+        open = false;
+        return action.InvokeAsync(map);
+    }
+
+    private async Task FileChosenAsync(InputFileChangeEventArgs e)
+    {
+        // Read the file before closing the menu: removing the <input> would cancel the read.
+        await OnOpenFile.InvokeAsync(e.File);
+        open = false;
+    }
+}

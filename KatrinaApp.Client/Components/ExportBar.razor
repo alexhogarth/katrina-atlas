@@ -28,6 +28,11 @@
             °E
         </label>
     }
+    <label class="atlas-export-fill" title="Stretch the map sideways so it fills wide images (like LinkedIn banners) instead of leaving sea at the sides">
+        <input type="checkbox" class="form-check-input m-0" checked="@Fill" disabled="@Busy"
+               @onchange="e => OnFillChanged.InvokeAsync(e.Value is true)" />
+        ↔ Fill space
+    </label>
     <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnFit" disabled="@Busy" title="Fit all your places into the frame">
         ⤢ Fit my places
     </button>
@@ -35,7 +40,7 @@
         @(Busy ? "Saving…" : "Download PNG")
     </button>
     <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnCancel" disabled="@Busy">Done</button>
-    <span class="atlas-export-hint">Zoom and drag up or down to frame the picture; it stays centred on the place you choose. Everything inside the dashed box is saved.</span>
+    <span class="atlas-export-hint">Zoom and drag up or down to frame the picture; it stays centred on the place you choose. Everything inside the dashed box is saved.@(Fill ? " With Fill space on, the box narrows to the width of the world and the picture is stretched sideways to the full size (pins keep their shape)." : "")</span>
     @if (!string.IsNullOrEmpty(Message))
     {
         <span class="atlas-export-error" role="alert">@Message</span>
@@ -80,6 +85,8 @@
 
     [Parameter] public double CenterLongitude { get; set; }
     [Parameter] public EventCallback<double> OnCenterChanged { get; set; }
+    [Parameter] public bool Fill { get; set; }
+    [Parameter] public EventCallback<bool> OnFillChanged { get; set; }
     [Parameter, EditorRequired] public ExportPreset Preset { get; set; } = default!;
     [Parameter] public bool Busy { get; set; }
     [Parameter] public string? Message { get; set; }

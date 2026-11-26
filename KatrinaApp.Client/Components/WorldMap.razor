@@ -14,7 +14,8 @@
     private string? lastSettingsJson;
     private MapTheme? lastTheme;
     private bool? lastPickMode;
-    private bool hasFitted;
+    private bool fitted;
+    private object? fittedKey;
 
     [Parameter] public IReadOnlyList<TravelLocation> Locations { get; set; } = [];
     [Parameter] public LocationDraft? Draft { get; set; }
@@ -22,13 +23,20 @@
     [Parameter] public MapSettings Settings { get; set; } = new();
     [Parameter] public bool PickMode { get; set; }
     [Parameter] public Guid? SelectedId { get; set; }
-    /// <summary>Once true, the map fits itself to the saved locations (once).</summary>
+    /// <summary>Places selected for changing together (highlighted like the selected place).</summary>
+    [Parameter] public IReadOnlySet<Guid>? PickedIds { get; set; }
+    /// <summary>Once true, the map fits itself to the saved locations (once per <see cref="FitKey"/>).</summary>
     [Parameter] public bool IsLoaded { get; set; }
+    /// <summary>When this changes (e.g. another map is opened) the map fits itself to the places again.</summary>
+    [Parameter] public object? FitKey { get; set; }
     /// <summary>CSS selector of an element that may overlay the map (fit/fly-to keep points clear of it).</summary>
     [Parameter] public string? ObstructionSelector { get; set; }
     [Parameter] public EventCallback<GeoPoint> OnMapClick { get; set; }
     [Parameter] public EventCallback<GeoPoint> OnDraftMoved { get; set; }
-    [Parameter] public EventCallback<Guid> OnMarkerClick { get; set; }
+    /// <summary>A marker was clicked; Additive is true with Ctrl / ⌘ / Shift held.</summary>
+    [Parameter] public EventCallback<(Guid Id, bool Additive)> OnMarkerClick { get; set; }
+    /// <summary>Shift + drag selected the markers inside a box.</summary>
+    [Parameter] public EventCallback<IReadOnlyList<Guid>> OnBoxSelect { get; set; }
 
     public static string ThemeKey(MapTheme theme) => theme.ToString().ToLowerInvariant();
 
@@ -77,14 +85,19 @@
 
         var markers = Locations
             .Where(l => l.Id != Draft?.EditingId)
-            .Select(l => ToDto(l.Id.ToString("N"), l.Latitude, l.Longitude, l.Name, l.Label, l.LabelPosition, l.Style, l.Id == SelectedId))
+            .Select(l => ToDto(l.Id.ToString("N"), l.Latitude, l.Longitude, l.Name, l.Label, l.LabelPosition, l.Style,
+                l.Id == SelectedId || PickedIds?.Contains(l.Id) == true))
             .ToList();
         var markersJson = JsonSerializer.Serialize(markers, AtlasJsonContext.Default.ListMapMarkerDto);
-        var fit = IsLoaded && !hasFitted;
+        var fit = IsLoaded && (!fitted || !Equals(fittedKey, FitKey));
         if (markersJson != lastMarkersJson || fit)
         {
             lastMarkersJson = markersJson;
-            hasFitted |= fit;
+            if (fit)
+            {
+                fitted = true;
+                fittedKey = FitKey;
+            }
             await map.InvokeVoidAsync("setMarkers", markersJson, fit);
         }
 
@@ -124,11 +137,20 @@
         map is null ? 2.5 : await map.InvokeAsync<double>("getZoom");
 
     /// <summary>Shows the export frame (width / height = <paramref name="aspect"/>) over the map.</summary>
-    public async Task StartExportAsync(double aspect, double centerLongitude)
+    public async Task StartExportAsync(double aspect, double centerLongitude, bool fill)
     {
         if (map is not null)
         {
-            await map.InvokeVoidAsync("startExport", aspect, centerLongitude);
+            await map.InvokeVoidAsync("startExport", aspect, centerLongitude, fill);
+        }
+    }
+
+    /// <summary>Turns "fill space" (stretch the picture sideways to fill the frame) on or off.</summary>
+    public async Task SetExportFillAsync(bool fill)
+    {
+        if (map is not null)
+        {
+            await map.InvokeVoidAsync("setExportFill", fill);
         }
     }
 
@@ -176,8 +198,13 @@
     public Task HandleDraftMoved(double lat, double lng) => OnDraftMoved.InvokeAsync(new GeoPoint(lat, lng));
 
     [JSInvokable("OnMarkerClick")]
-    public Task HandleMarkerClick(string id) =>
-        Guid.TryParseExact(id, "N", out var guid) ? OnMarkerClick.InvokeAsync(guid) : Task.CompletedTask;
+    public Task HandleMarkerClick(string id, bool additive) =>
+        Guid.TryParseExact(id, "N", out var guid) ? OnMarkerClick.InvokeAsync((guid, additive)) : Task.CompletedTask;
+
+    [JSInvokable("OnBoxSelect")]
+    public Task HandleBoxSelect(string[] ids) =>
+        OnBoxSelect.InvokeAsync(ids.Select(id => Guid.TryParseExact(id, "N", out var g) ? g : Guid.Empty)
+            .Where(g => g != Guid.Empty).ToList());
 
     public async ValueTask DisposeAsync()
     {

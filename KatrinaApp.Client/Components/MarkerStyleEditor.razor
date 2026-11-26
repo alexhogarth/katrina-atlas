@@ -21,16 +21,7 @@
     </div>
 
     <div class="atlas-field-label">Colour</div>
-    <div class="atlas-colors">
-        <input type="color" class="atlas-color-input" title="Custom colour"
-               @bind="Style.Color" @bind:event="oninput" @bind:after="Changed" />
-        @foreach (var swatch in Swatches)
-        {
-            <button type="button" class="atlas-swatch @(string.Equals(Style.Color, swatch, StringComparison.OrdinalIgnoreCase) ? "active" : null)"
-                    style="--swatch:@swatch" title="@swatch" aria-label="Colour @swatch"
-                    @onclick="() => SetColor(swatch)"></button>
-        }
-    </div>
+    <ColorPicker Value="@MarkerSvgRenderer.SanitizeColor(Style.Color)" OnPick="SetColor" />
 
     <div class="atlas-sliders">
         <label class="atlas-slider">
@@ -104,12 +95,6 @@
 </div>
 
 @code {
-    private static readonly string[] Swatches =
-    [
-        "#ffffff", "#b8ffe0", "#ffd76a", "#ff9f43", "#ff6b6b",
-        "#ff8fd8", "#b28dff", "#6bc5ff", "#2ecc71", "#1b1b1b",
-    ];
-
     [Parameter, EditorRequired] public MarkerStyle Style { get; set; } = default!;
     [Parameter] public EventCallback OnChanged { get; set; }
 

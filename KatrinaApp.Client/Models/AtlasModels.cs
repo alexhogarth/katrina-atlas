@@ -15,6 +15,20 @@ public enum VisitKind
 {
     Visited,
     Lived,
+    Worked,
+}
+
+public static class VisitKinds
+{
+    /// <summary>Display order used by the list and the editors.</summary>
+    public static IReadOnlyList<VisitKind> All { get; } = [VisitKind.Lived, VisitKind.Worked, VisitKind.Visited];
+
+    public static string Label(VisitKind kind) => kind switch
+    {
+        VisitKind.Lived => "🏡 Lived",
+        VisitKind.Worked => "💼 Worked",
+        _ => "✈️ Visited",
+    };
 }
 
 /// <summary>Where a location's custom map label sits relative to its marker.</summary>
@@ -43,6 +57,8 @@ public sealed class MapSettings
     public double? MarkerZoom { get; set; }
     /// <summary>Longitude placed in the middle of exported images (0 = Greenwich, so the UK is central).</summary>
     public double ExportCenterLongitude { get; set; }
+    /// <summary>Stretch exported images sideways so the map fills wide formats (e.g. LinkedIn banners) without sea at the sides.</summary>
+    public bool ExportFill { get; set; }
 
     public MapSettings Clone() => (MapSettings)MemberwiseClone();
 }
@@ -88,4 +104,25 @@ public sealed class LocationDraft
         Label = location.Label ?? "",
         LabelPosition = location.LabelPosition,
     };
+}
+
+/// <summary>An entry in the list of saved maps.</summary>
+public sealed class AtlasMapInfo
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>One map: its places and how it looks. Also the format of saved .atlas.json files.</summary>
+public sealed class AtlasDocument
+{
+    public const int MaxNameLength = 60;
+
+    public string Format { get; set; } = "katrinas-atlas";
+    public int Version { get; set; } = 1;
+    public string Name { get; set; } = "";
+    public MapTheme? Theme { get; set; }
+    public MapSettings Settings { get; set; } = new();
+    public List<TravelLocation> Locations { get; set; } = [];
 }

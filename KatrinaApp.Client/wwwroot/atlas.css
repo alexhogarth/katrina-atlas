@@ -740,16 +740,6 @@ html, body {
     margin-bottom: 0.85rem;
 }
 
-.atlas-color-input {
-    width: 34px;
-    height: 28px;
-    padding: 0;
-    border: 1px solid var(--atlas-border);
-    border-radius: 8px;
-    background: none;
-    cursor: pointer;
-}
-
 .atlas-swatch {
     width: 24px;
     height: 24px;
@@ -1160,6 +1150,384 @@ html, body {
 .atlas-switch input:focus-visible + .atlas-switch-track {
     outline: 2px solid var(--atlas-accent);
     outline-offset: 2px;
+}
+
+/* ---------- Place types, multi-select ---------- */
+
+.atlas-segmented.atlas-segmented-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.atlas-segmented-3 button {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.2rem;
+    white-space: nowrap;
+}
+
+.atlas-group-title {
+    align-items: center;
+}
+
+.atlas-list-actions .btn {
+    white-space: nowrap;
+}
+
+.atlas-list-actions .atlas-btn-primary {
+    flex: 1 1 auto;
+}
+
+.atlas-group-count {
+    margin-left: 0.3rem;
+    opacity: 0.8;
+}
+
+.atlas-link-btn {
+    border: 0;
+    background: none;
+    padding: 0 0.2rem;
+    color: var(--atlas-accent);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.atlas-link-btn:hover {
+    text-decoration: underline;
+}
+
+.atlas-item-main {
+    user-select: none;
+}
+
+.atlas-check {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    border: 2px solid var(--atlas-muted);
+    display: grid;
+    place-items: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.atlas-check.on {
+    background: var(--atlas-accent);
+    border-color: var(--atlas-accent);
+    color: var(--atlas-accent-contrast);
+}
+
+.atlas-item.picked {
+    background: var(--atlas-accent-soft);
+    border-color: var(--atlas-accent);
+}
+
+.atlas-bulk {
+    margin: 0.25rem 1rem 0.5rem;
+    padding: 0.8rem;
+    border-radius: 14px;
+    border: 1px solid var(--atlas-accent);
+    background: var(--atlas-card);
+}
+
+.atlas-bulk-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+/* Shift + drag selection rectangle on the map. */
+.atlas-select-box {
+    position: absolute;
+    z-index: 800;
+    pointer-events: none;
+    border: 2px dashed var(--atlas-accent);
+    background: var(--atlas-accent-soft);
+    border-radius: 4px;
+}
+
+/* ---------- Colour wheel ---------- */
+
+.atlas-color-picker {
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    gap: 0.85rem;
+    align-items: start;
+    margin-bottom: 0.85rem;
+}
+
+/* Hue goes round the wheel (red at the top), saturation increases outwards; --wheel-dim darkens it for brightness. */
+.atlas-wheel {
+    position: relative;
+    width: 128px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background:
+        radial-gradient(circle closest-side, #fff 0%, rgba(255, 255, 255, 0) 100%),
+        conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+    border: 1px solid var(--atlas-border);
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.atlas-wheel:focus-visible {
+    outline: 2px solid var(--atlas-accent);
+    outline-offset: 2px;
+}
+
+.atlas-wheel-dim {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: #000;
+    opacity: var(--wheel-dim, 0);
+    pointer-events: none;
+}
+
+.atlas-wheel-thumb {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--swatch);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+}
+
+.atlas-color-side {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.atlas-color-current {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.atlas-color-current input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+}
+
+.atlas-color-chip {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid var(--atlas-border);
+    background:
+        linear-gradient(var(--swatch), var(--swatch)),
+        repeating-conic-gradient(#bbb 0 25%, #eee 0 50%) 0 0 / 10px 10px;
+}
+
+.atlas-brightness input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 10px;
+    border-radius: 999px;
+    background: linear-gradient(to right, #000, var(--bright-to, #fff));
+    border: 1px solid var(--atlas-border);
+}
+
+.atlas-brightness input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.4);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.atlas-brightness input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.atlas-color-side .atlas-colors {
+    margin-bottom: 0;
+    gap: 0.3rem;
+}
+
+.atlas-color-side .atlas-swatch {
+    width: 22px;
+    height: 22px;
+}
+
+/* ---------- Saved maps ---------- */
+
+.atlas-maps-row {
+    padding: 0.6rem 1rem 0;
+}
+
+.atlas-maps-row-disabled {
+    opacity: 0.5;
+}
+
+.atlas-maps-message {
+    margin: 0.4rem 0 0;
+}
+
+.atlas-maps {
+    position: relative;
+    z-index: 5;
+}
+
+.atlas-maps-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.7rem;
+    border-radius: 10px;
+    border: 1px solid var(--atlas-border);
+    background: var(--atlas-card);
+    color: var(--atlas-text);
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.atlas-maps-toggle:hover,
+.atlas-maps.open .atlas-maps-toggle {
+    border-color: var(--atlas-accent);
+}
+
+.atlas-maps-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.atlas-maps-caret {
+    color: var(--atlas-muted);
+}
+
+.atlas-maps-card {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    padding: 0.8rem;
+    border-radius: 14px;
+    background: var(--atlas-panel-solid);
+    border: 1px solid var(--atlas-border);
+    box-shadow: var(--atlas-shadow);
+    color: var(--atlas-text);
+}
+
+.atlas-maps-list {
+    list-style: none;
+    margin: 0 0 0.6rem;
+    padding: 0;
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.atlas-maps-list li {
+    display: flex;
+    align-items: center;
+    border-radius: 10px;
+}
+
+.atlas-maps-list li:hover {
+    background: var(--atlas-card-hover);
+}
+
+.atlas-maps-list li.current {
+    background: var(--atlas-accent-soft);
+}
+
+.atlas-maps-item {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.5rem;
+    border: 0;
+    background: none;
+    color: inherit;
+    text-align: left;
+}
+
+.atlas-maps-dot {
+    width: 0.8rem;
+    color: var(--atlas-accent);
+    font-size: 0.7rem;
+}
+
+.atlas-maps-item-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.atlas-maps-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+}
+
+.atlas-maps-actions .btn {
+    font-size: 0.8rem;
+    text-align: left;
+}
+
+.atlas-maps-danger:hover {
+    color: var(--atlas-danger);
+}
+
+.atlas-file-btn {
+    position: relative;
+    overflow: hidden;
+    margin: 0;
+    cursor: pointer;
+}
+
+.atlas-file-btn input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+/* ---------- Export: fill space ---------- */
+
+.atlas-export-fill {
+    cursor: pointer;
+    color: var(--atlas-text) !important;
+    font-weight: 600;
+}
+
+.atlas-export-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: var(--atlas-accent);
+    color: var(--atlas-accent-contrast);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.atlas-export-badge[hidden] {
+    display: none;
 }
 
 /* ---------- Small screens: panel becomes a bottom sheet ---------- */

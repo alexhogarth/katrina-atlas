@@ -10,11 +10,14 @@
               Settings="mapSettings"
               PickMode="pickMode"
               SelectedId="selectedId"
+              PickedIds="picked"
               IsLoaded="loaded"
+              FitKey="currentMap?.Id"
               ObstructionSelector=".atlas-panel"
               OnMapClick="HandleMapClickAsync"
               OnDraftMoved="HandleDraftMovedAsync"
-              OnMarkerClick="HandleMarkerClickAsync" />
+              OnMarkerClick="HandleMarkerClickAsync"
+              OnBoxSelect="HandleBoxSelect" />
 
     <MapSettingsMenu Settings="mapSettings" OnChanged="SaveMapSettingsAsync" OnExport="StartExportAsync" />
 
@@ -24,6 +27,8 @@
                    Busy="exporting"
                    Message="@exportMessage"
                    CenterLongitude="mapSettings.ExportCenterLongitude"
+                   Fill="mapSettings.ExportFill"
+                   OnFillChanged="ChangeExportFillAsync"
                    OnCenterChanged="ChangeExportCenterAsync"
                    OnPresetChanged="ChangeExportPresetAsync"
                    OnFit="FitExportAsync"
@@ -63,6 +68,24 @@
             </div>
         </header>
 
+        <div class="atlas-maps-row @(draft is not null ? "atlas-maps-row-disabled" : null)" inert="@(draft is not null)">
+            <MapSwitcher Maps="maps"
+                         Current="currentMap"
+                         OnOpening="RefreshMapsAsync"
+                         OnSwitch="SwitchMapAsync"
+                         OnOpenInNewTab="OpenInNewTabAsync"
+                         OnNew="NewMapAsync"
+                         OnDuplicate="DuplicateMapAsync"
+                         OnRename="RenameMapAsync"
+                         OnDelete="DeleteMapAsync"
+                         OnSaveFile="SaveMapFileAsync"
+                         OnOpenFile="OpenMapFileAsync" />
+            @if (mapMessage is not null)
+            {
+                <p class="atlas-hint atlas-maps-message" role="status">@mapMessage</p>
+            }
+        </div>
+
         <div class="atlas-panel-body">
             @if (!loaded)
             {
@@ -87,12 +110,31 @@
                     <button type="button" class="btn atlas-btn-primary w-100" @onclick="StartAdd">＋ Add a place</button>
                     @if (locations.Count > 1)
                     {
+                        <button type="button" class="btn atlas-btn-ghost @(SelectingAny ? "active" : null)" aria-pressed="@SelectingAny"
+                                title="Select several places to change them together" @onclick="ToggleSelectMode">☑ Select</button>
                         <button type="button" class="btn atlas-btn-ghost" title="Show all places" @onclick="FitAllAsync">⤢</button>
                     }
                 </div>
+                @if (picked.Count > 0)
+                {
+                    <BulkEditor Items="PickedLocations"
+                                TotalCount="locations.Count"
+                                OnChanged="SaveDocAsync"
+                                OnSelectAll="SelectAll"
+                                OnClear="ClearSelection"
+                                OnDeleteAll="DeletePickedAsync" />
+                }
+                else if (selectMode)
+                {
+                    <p class="atlas-hint px-3 mb-0">Tap places in the list (or Ctrl/⌘ / Shift + click pins, or Shift + drag on the map) to select them.</p>
+                }
                 <LocationList Locations="locations"
                               SelectedId="selectedId"
+                              PickedIds="picked"
+                              SelectMode="SelectingAny"
                               OnSelect="SelectAsync"
+                              OnToggle="TogglePicked"
+                              OnToggleMany="TogglePickedMany"
                               OnEdit="StartEdit"
                               OnDelete="DeleteAsync" />
             }
@@ -113,34 +155,48 @@
         (MapTheme.Midnight, "Midnight", "#070818", "#1b1e3a"),
     ];
 
+    private const long MaxMapFileBytes = 20 * 1024 * 1024;
+
     private readonly MarkerStyle brandStyle = new() { Size = 14, TailLength = 22, TailCurve = 0.4, Glow = 0.5 };
 
     private WorldMap? map;
     private LocationEditor? editor;
     private IJSObjectReference? helpers;
+    private IJSObjectReference? storageWatch;
+    private DotNetObjectReference<AtlasApp>? selfRef;
+    private List<AtlasMapInfo> maps = [];
+    private AtlasMapInfo? currentMap;
+    private AtlasDocument doc = new();
     private List<TravelLocation> locations = [];
     private LocationDraft? draft;
     private MarkerStyle lastStyle = new();
     private MapSettings mapSettings = new();
     private MapTheme theme = MapTheme.Light;
     private Guid? selectedId;
+    private readonly HashSet<Guid> picked = [];
+    private bool selectMode;
     private bool loaded;
     private bool panelOpen = true;
     private bool pickMode;
     private ExportBar.ExportPreset? exportPreset;
     private bool exporting;
     private string? exportMessage;
+    private string? mapMessage;
+
+    private bool SelectingAny => selectMode || picked.Count > 0;
+
+    private List<TravelLocation> PickedLocations => locations.Where(l => picked.Contains(l.Id)).ToList();
 
     private string Summary
     {
         get
         {
-            if (!loaded) return "Places lived & visited";
-            var lived = locations.Count(l => l.Kind == VisitKind.Lived);
-            var visited = locations.Count - lived;
-            return locations.Count == 0
-                ? "Places lived & visited"
-                : $"{lived} lived · {visited} visited";
+            if (!loaded || locations.Count == 0) return "Places lived, worked & visited";
+            var parts = VisitKinds.All
+                .Select(k => (Kind: k, Count: locations.Count(l => l.Kind == k)))
+                .Where(x => x.Count > 0 || x.Kind != VisitKind.Worked)
+                .Select(x => $"{x.Count} {x.Kind.ToString().ToLowerInvariant()}");
+            return string.Join(" · ", parts);
         }
     }
 
@@ -150,11 +206,198 @@
         var themeKey = await helpers.InvokeAsync<string>("getTheme");
         theme = Enum.TryParse<MapTheme>(themeKey, ignoreCase: true, out var t) ? t : MapTheme.Light;
 
-        locations = await Store.LoadAsync();
         lastStyle = await Store.LoadLastStyleAsync() ?? new MarkerStyle();
-        mapSettings = await Store.LoadMapSettingsAsync();
+        maps = await Store.LoadIndexAsync();
+        // ?map=<id> in the address lets each browser tab work on a different map.
+        Guid? requested = Guid.TryParse(await helpers.InvokeAsync<string?>("getQueryParam", "map"), out var q) ? q : null;
+        var last = await Store.LoadCurrentMapIdAsync();
+        var target = maps.FirstOrDefault(m => m.Id == requested) ?? maps.FirstOrDefault(m => m.Id == last) ?? maps[0];
+        await OpenMapAsync(target);
         loaded = true;
+
+        selfRef = DotNetObjectReference.Create(this);
+        storageWatch = await helpers.InvokeAsync<IJSObjectReference>("watchStorage", selfRef);
     }
+
+    // ---------- Maps ----------
+
+    private async Task OpenMapAsync(AtlasMapInfo info)
+    {
+        if (exportPreset is not null) await EndExportAsync();
+        doc = await Store.LoadMapAsync(info.Id);
+        currentMap = info;
+        locations = doc.Locations;
+        mapSettings = doc.Settings;
+        draft = null;
+        pickMode = false;
+        selectedId = null;
+        picked.Clear();
+        selectMode = false;
+        if (doc.Theme is { } t) await ApplyThemeAsync(t);
+        await Store.SaveCurrentMapIdAsync(info.Id);
+        if (helpers is not null) await helpers.InvokeVoidAsync("setQueryParam", "map", info.Id.ToString("N"));
+    }
+
+    private async Task SaveDocAsync()
+    {
+        if (currentMap is null) return;
+        doc.Name = currentMap.Name;
+        doc.Locations = locations;
+        doc.Settings = mapSettings;
+        await Store.SaveMapAsync(currentMap.Id, doc);
+    }
+
+    private async Task RefreshMapsAsync()
+    {
+        maps = await Store.LoadIndexAsync();
+        if (currentMap is not null) currentMap = maps.FirstOrDefault(m => m.Id == currentMap.Id) ?? currentMap;
+    }
+
+    private async Task SwitchMapAsync(AtlasMapInfo info)
+    {
+        mapMessage = null;
+        if (info.Id == currentMap?.Id) return;
+        await SaveDocAsync();
+        await OpenMapAsync(info);
+    }
+
+    private async Task OpenInNewTabAsync(AtlasMapInfo info)
+    {
+        await SaveDocAsync();
+        if (helpers is not null) await helpers.InvokeVoidAsync("openWithQueryParam", "map", info.Id.ToString("N"));
+    }
+
+    private async Task<string?> PromptAsync(string message, string value) =>
+        helpers is null ? null : await helpers.InvokeAsync<string?>("promptText", message, value);
+
+    private async Task NewMapAsync()
+    {
+        mapMessage = null;
+        var name = await PromptAsync("Name for the new map:", "New map");
+        if (name is null) return;
+        await SaveDocAsync();
+        var settings = mapSettings.Clone();
+        var info = await Store.CreateMapAsync(new AtlasDocument { Name = name, Theme = theme, Settings = settings });
+        await RefreshMapsAsync();
+        await OpenMapAsync(info);
+    }
+
+    private async Task DuplicateMapAsync()
+    {
+        mapMessage = null;
+        if (currentMap is null) return;
+        var name = await PromptAsync("Name for the copy:", $"{currentMap.Name} copy");
+        if (name is null) return;
+        await SaveDocAsync();
+        var copy = LocationStore.FromFileJson(LocationStore.ToFileJson(doc)) ?? new AtlasDocument();
+        copy.Name = name;
+        var info = await Store.CreateMapAsync(copy);
+        await RefreshMapsAsync();
+        await OpenMapAsync(info);
+    }
+
+    private async Task RenameMapAsync()
+    {
+        mapMessage = null;
+        if (currentMap is null) return;
+        var name = await PromptAsync("Rename this map:", currentMap.Name);
+        if (string.IsNullOrWhiteSpace(name)) return;
+        await SaveDocAsync();
+        await Store.RenameMapAsync(currentMap.Id, name);
+        await RefreshMapsAsync();
+        doc.Name = currentMap.Name;
+    }
+
+    private async Task DeleteMapAsync()
+    {
+        mapMessage = null;
+        if (currentMap is null) return;
+        var count = locations.Count;
+        var places = count == 1 ? "1 place" : $"{count} places";
+        if (!await JS.InvokeAsync<bool>("confirm", $"Delete the map \"{currentMap.Name}\" ({places})?\n\nTip: use \"Save to file\" first if you might want it back."))
+        {
+            return;
+        }
+
+        var deleting = currentMap;
+        await RefreshMapsAsync();
+        var next = maps.FirstOrDefault(m => m.Id != deleting.Id)
+                   ?? await Store.CreateMapAsync(new AtlasDocument { Name = "My map", Theme = theme, Settings = mapSettings.Clone() });
+        await Store.DeleteMapAsync(deleting.Id);
+        await RefreshMapsAsync();
+        await OpenMapAsync(maps.FirstOrDefault(m => m.Id == next.Id) ?? next);
+    }
+
+    private async Task SaveMapFileAsync()
+    {
+        mapMessage = null;
+        if (currentMap is null || helpers is null) return;
+        await SaveDocAsync();
+        var safe = string.Concat(currentMap.Name.Select(c => char.IsLetterOrDigit(c) || c is ' ' or '-' or '_' ? c : '-')).Trim();
+        await helpers.InvokeVoidAsync("downloadText", $"{(safe.Length > 0 ? safe : "map")}.atlas.json", LocationStore.ToFileJson(doc), "application/json");
+        mapMessage = $"Saved \"{currentMap.Name}\" to your downloads. Use \"Open file…\" to load it again, on any computer.";
+    }
+
+    private async Task OpenMapFileAsync(IBrowserFile file)
+    {
+        mapMessage = null;
+        string json;
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxMapFileBytes);
+            using var reader = new StreamReader(stream);
+            json = await reader.ReadToEndAsync();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            mapMessage = "Sorry, that file couldn't be read.";
+            return;
+        }
+
+        var imported = LocationStore.FromFileJson(json);
+        if (imported is null)
+        {
+            mapMessage = "That file isn't a saved atlas map.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(imported.Name))
+        {
+            var fileName = file.Name;
+            foreach (var ext in new[] { ".json", ".atlas" })
+            {
+                if (fileName.EndsWith(ext, StringComparison.OrdinalIgnoreCase)) fileName = fileName[..^ext.Length];
+            }
+            imported.Name = fileName;
+        }
+
+        await SaveDocAsync();
+        var info = await Store.CreateMapAsync(imported);
+        await RefreshMapsAsync();
+        await OpenMapAsync(info);
+        mapMessage = $"Opened \"{info.Name}\" ({imported.Locations.Count} places) as a new map.";
+    }
+
+    /// <summary>Another tab saved something: refresh the map list, and this map if it was changed there.</summary>
+    [JSInvokable]
+    public async Task OnStorageChanged(string key)
+    {
+        if (key == LocationStore.IndexKey)
+        {
+            await RefreshMapsAsync();
+            StateHasChanged();
+        }
+        else if (currentMap is not null && key == LocationStore.MapKey(currentMap.Id) && draft is null && picked.Count == 0)
+        {
+            doc = await Store.LoadMapAsync(currentMap.Id);
+            locations = doc.Locations;
+            mapSettings = doc.Settings;
+            if (selectedId is { } id && locations.All(l => l.Id != id)) selectedId = null;
+            StateHasChanged();
+        }
+    }
+
+    // ---------- Settings, theme, export ----------
 
     private async Task SaveMapSettingsAsync(MapSettings settings)
     {
@@ -165,10 +408,17 @@
         }
 
         mapSettings = settings;
-        await Store.SaveMapSettingsAsync(settings);
+        await SaveDocAsync();
     }
 
     private async Task SetThemeAsync(MapTheme value)
+    {
+        await ApplyThemeAsync(value);
+        doc.Theme = value;
+        await SaveDocAsync();
+    }
+
+    private async Task ApplyThemeAsync(MapTheme value)
     {
         theme = value;
         if (helpers is not null)
@@ -187,7 +437,7 @@
         StateHasChanged();
         if (map is not null)
         {
-            await map.StartExportAsync(exportPreset.Aspect, mapSettings.ExportCenterLongitude);
+            await map.StartExportAsync(exportPreset.Aspect, mapSettings.ExportCenterLongitude, mapSettings.ExportFill);
             if (locations.Count > 0)
             {
                 await map.FitToExportFrameAsync();
@@ -201,7 +451,7 @@
         exportMessage = null;
         if (map is not null)
         {
-            await map.StartExportAsync(preset.Aspect, mapSettings.ExportCenterLongitude);
+            await map.StartExportAsync(preset.Aspect, mapSettings.ExportCenterLongitude, mapSettings.ExportFill);
             if (locations.Count > 0)
             {
                 await map.FitToExportFrameAsync();
@@ -217,6 +467,21 @@
         if (map is not null)
         {
             await map.SetExportCenterAsync(settings.ExportCenterLongitude);
+            if (locations.Count > 0)
+            {
+                await map.FitToExportFrameAsync();
+            }
+        }
+    }
+
+    private async Task ChangeExportFillAsync(bool fill)
+    {
+        var settings = mapSettings.Clone();
+        settings.ExportFill = fill;
+        await SaveMapSettingsAsync(settings);
+        if (map is not null)
+        {
+            await map.SetExportFillAsync(fill);
             if (locations.Count > 0)
             {
                 await map.FitToExportFrameAsync();
@@ -257,8 +522,11 @@
         }
     }
 
+    // ---------- Places ----------
+
     private void StartAdd()
     {
+        ClearSelection();
         selectedId = null;
         pickMode = false;
         draft = new LocationDraft { Style = lastStyle.Clone() };
@@ -266,6 +534,7 @@
 
     private async Task StartEdit(TravelLocation location)
     {
+        ClearSelection();
         selectedId = location.Id;
         pickMode = false;
         draft = LocationDraft.FromLocation(location);
@@ -302,7 +571,7 @@
         pickMode = false;
         selectedId = location.Id;
 
-        await Store.SaveAsync(locations);
+        await SaveDocAsync();
         await Store.SaveLastStyleAsync(lastStyle);
         await ScrollToSelectedAsync();
     }
@@ -328,7 +597,8 @@
 
         locations.Remove(location);
         if (selectedId == location.Id) selectedId = null;
-        await Store.SaveAsync(locations);
+        picked.Remove(location.Id);
+        await SaveDocAsync();
         return true;
     }
 
@@ -338,14 +608,95 @@
         await FlyToAsync(new GeoPoint(location.Latitude, location.Longitude));
     }
 
-    private async Task HandleMarkerClickAsync(Guid id)
+    // ---------- Selecting several places ----------
+
+    private void ToggleSelectMode()
+    {
+        if (SelectingAny)
+        {
+            ClearSelection();
+        }
+        else
+        {
+            selectMode = true;
+            if (selectedId is { } id) picked.Add(id);
+            selectedId = null;
+        }
+    }
+
+    private void TogglePicked(TravelLocation location) => TogglePicked(location.Id);
+
+    private void TogglePicked(Guid id)
+    {
+        // Ctrl-clicking a second place keeps the one that was already selected.
+        if (picked.Count == 0 && selectedId is { } current && current != id) picked.Add(current);
+        if (!picked.Remove(id)) picked.Add(id);
+        selectedId = null;
+    }
+
+    private void TogglePickedMany((List<TravelLocation> Items, bool Select) args)
+    {
+        foreach (var l in args.Items)
+        {
+            if (args.Select) picked.Add(l.Id);
+            else picked.Remove(l.Id);
+        }
+        selectedId = null;
+    }
+
+    private void SelectAll()
+    {
+        foreach (var l in locations) picked.Add(l.Id);
+        selectedId = null;
+    }
+
+    private void ClearSelection()
+    {
+        picked.Clear();
+        selectMode = false;
+    }
+
+    private async Task DeletePickedAsync()
+    {
+        var count = picked.Count;
+        if (count == 0 || !await JS.InvokeAsync<bool>("confirm", $"Remove {count} selected {(count == 1 ? "place" : "places")} from the map?"))
+        {
+            return;
+        }
+
+        locations.RemoveAll(l => picked.Contains(l.Id));
+        if (selectedId is { } id && picked.Contains(id)) selectedId = null;
+        ClearSelection();
+        await SaveDocAsync();
+    }
+
+    private async Task HandleMarkerClickAsync((Guid Id, bool Additive) click)
     {
         if (draft is not null) return;
-        selectedId = id;
         panelOpen = true;
+        if (click.Additive || selectMode)
+        {
+            TogglePicked(click.Id);
+            StateHasChanged();
+            return;
+        }
+
+        ClearSelection();
+        selectedId = click.Id;
         StateHasChanged();
         await ScrollToSelectedAsync();
     }
+
+    private void HandleBoxSelect(IReadOnlyList<Guid> ids)
+    {
+        if (draft is not null || ids.Count == 0) return;
+        if (picked.Count == 0 && selectedId is { } current) picked.Add(current);
+        foreach (var id in ids) picked.Add(id);
+        selectedId = null;
+        panelOpen = true;
+    }
+
+    // ---------- Map interaction ----------
 
     private async Task HandleMapClickAsync(GeoPoint point)
     {
@@ -383,9 +734,19 @@
 
     public async ValueTask DisposeAsync()
     {
-        if (helpers is not null)
+        try
         {
-            try { await helpers.DisposeAsync(); } catch (JSDisconnectedException) { }
+            if (storageWatch is not null)
+            {
+                await storageWatch.InvokeVoidAsync("dispose");
+                await storageWatch.DisposeAsync();
+            }
+            if (helpers is not null)
+            {
+                await helpers.DisposeAsync();
+            }
         }
+        catch (JSDisconnectedException) { }
+        selfRef?.Dispose();
     }
 }

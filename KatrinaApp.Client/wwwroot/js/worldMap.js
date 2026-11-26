@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = { showBorders: true, showCountryNames: true, showCityNa
 // Limits for markers that scale with the map, so they never vanish or swamp the screen.
 const MIN_MARKER_SCALE = 0.05;
 const MAX_MARKER_SCALE = 8;
+// "Fill space" exports stretch the picture sideways by at most this much.
+const MAX_EXPORT_STRETCH = 2.5;
 
 // ---------- Vector basemap (OpenFreeMap / OpenMapTiles schema, no API key) ----------
 
@@ -374,7 +376,11 @@ export function createMap(element, dotnet, options) {
                 offset: tooltipOffset(m),
                 className: 'km-tooltip',
             });
-            marker.on('click', () => dotnet.invokeMethodAsync('OnMarkerClick', m.id));
+            marker.on('click', e => {
+                const oe = e.originalEvent;
+                const additive = !!(oe && (oe.ctrlKey || oe.metaKey || oe.shiftKey));
+                dotnet.invokeMethodAsync('OnMarkerClick', m.id, additive);
+            });
             marker.addTo(map);
             markers.set(m.id, { marker, key, data: m });
         }
@@ -480,9 +486,53 @@ export function createMap(element, dotnet, options) {
         applyBasemap();
     }
 
+    // ---------- Shift + drag: select every marker inside a box ----------
+
+    // Replaces Leaflet's shift-drag box zoom.
+    map.boxZoom.disable();
+    element.addEventListener('pointerdown', e => {
+        if (!e.shiftKey || e.button !== 0 || pickMode || exportFrame) return;
+        if (e.target.closest('.leaflet-marker-icon, .leaflet-control, .atlas-export-frame')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        map.dragging.disable();
+        const start = map.mouseEventToContainerPoint(e);
+        const box = L.DomUtil.create('div', 'atlas-select-box', element);
+        let end = start;
+        const move = ev => {
+            end = map.mouseEventToContainerPoint(ev);
+            const b = L.bounds(start, end);
+            Object.assign(box.style, {
+                left: `${b.min.x}px`, top: `${b.min.y}px`,
+                width: `${b.max.x - b.min.x}px`, height: `${b.max.y - b.min.y}px`,
+            });
+        };
+        const up = () => {
+            document.removeEventListener('pointermove', move);
+            document.removeEventListener('pointerup', up);
+            document.removeEventListener('pointercancel', up);
+            box.remove();
+            map.dragging.enable();
+            const b = L.bounds(start, end);
+            if (b.getSize().x < 4 && b.getSize().y < 4) return;
+            const ids = [];
+            for (const [id, entry] of markers) {
+                // Markers are drawn on one copy of the world; check the copy nearest the box too.
+                const ll = entry.marker.getLatLng();
+                const p = map.latLngToContainerPoint(ll);
+                if (b.contains(p)) ids.push(id);
+            }
+            dotnet.invokeMethodAsync('OnBoxSelect', ids);
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+        document.addEventListener('pointercancel', up);
+    }, true);
+
     // ---------- PNG export ----------
 
-    let exportFrame = null; // { el, world, aspect, centerLng, rect }
+    // base: the largest frame of the export's shape; rect: the part actually captured (narrower when stretching to fill).
+    let exportFrame = null; // { el, world, badge, aspect, centerLng, fill, base, rect }
 
     // The part of the map not covered by the side panel / bottom sheet.
     function visibleArea() {
@@ -513,9 +563,28 @@ export function createMap(element, dotnet, options) {
 
     function layoutFrame() {
         if (!exportFrame) return;
-        const r = frameRect(exportFrame.aspect);
-        Object.assign(exportFrame.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+        exportFrame.base = frameRect(exportFrame.aspect);
+        updateFrameWidth();
+    }
+
+    // With "fill space" on, the captured area is only as wide as one world, and the image is stretched sideways
+    // to the export's full width, so there's no empty sea at the sides.
+    function exportStretch() {
+        if (!exportFrame?.fill || !exportFrame.base) return 1;
+        const worldPx = 256 * Math.pow(2, map.getZoom());
+        return Math.min(MAX_EXPORT_STRETCH, Math.max(1, exportFrame.base.w / worldPx));
+    }
+
+    function updateFrameWidth() {
+        if (!exportFrame?.base) return;
+        const base = exportFrame.base;
+        const w = Math.max(1, Math.floor(base.w / exportStretch()));
+        const r = { x: base.x + Math.round((base.w - w) / 2), y: base.y, w, h: base.h };
         exportFrame.rect = r;
+        Object.assign(exportFrame.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+        const stretch = base.w / r.w;
+        exportFrame.badge.hidden = stretch < 1.01;
+        exportFrame.badge.textContent = `↔ stretched ${stretch.toFixed(2)}× to fill`;
         updateWorldMask();
     }
 
@@ -555,24 +624,37 @@ export function createMap(element, dotnet, options) {
         snapTimer = setTimeout(() => snapToCenter(true), 80);
     };
 
-    function startExport(aspect, centerLng) {
+    function startExport(aspect, centerLng, fill) {
         if (!exportFrame) {
             const el = document.createElement('div');
             el.className = 'atlas-export-frame';
             const world = document.createElement('div');
             world.className = 'atlas-export-world';
             el.appendChild(world);
+            const badge = document.createElement('div');
+            badge.className = 'atlas-export-badge';
+            badge.hidden = true;
+            el.appendChild(badge);
             element.appendChild(el);
-            exportFrame = { el, world, aspect, centerLng: 0 };
+            exportFrame = { el, world, badge, aspect, centerLng: 0, fill: false };
             // Let the map zoom out far enough to fit the whole world into a wide banner.
             map.setMinZoom(0);
             map.on('resize', layoutFrame);
-            map.on('move zoom', updateWorldMask);
+            map.on('move', updateWorldMask);
+            map.on('zoom zoomend', updateFrameWidth);
             map.on('moveend', onExportMoveEnd);
         }
         exportFrame.aspect = aspect;
         exportFrame.centerLng = normalizeLng(centerLng ?? 0);
+        exportFrame.fill = !!fill;
         layoutFrame();
+        snapToCenter(false);
+    }
+
+    function setExportFill(fill) {
+        if (!exportFrame) return;
+        exportFrame.fill = !!fill;
+        updateFrameWidth();
         snapToCenter(false);
     }
 
@@ -586,7 +668,8 @@ export function createMap(element, dotnet, options) {
     function endExport() {
         if (!exportFrame) return;
         map.off('resize', layoutFrame);
-        map.off('move zoom', updateWorldMask);
+        map.off('move', updateWorldMask);
+        map.off('zoom zoomend', updateFrameWidth);
         map.off('moveend', onExportMoveEnd);
         clearTimeout(snapTimer);
         exportFrame.el.remove();
@@ -600,7 +683,7 @@ export function createMap(element, dotnet, options) {
     function fitToFrame() {
         const points = [...markers.values()].map(e => e.marker.getLatLng());
         if (!exportFrame || points.length === 0) return;
-        const r = exportFrame.rect;
+        const r = exportFrame.base;
         const c = exportFrame.centerLng;
         const pad = Math.min(60, r.w * 0.06, r.h * 0.14);
 
@@ -610,7 +693,9 @@ export function createMap(element, dotnet, options) {
         const yMin = Math.min(...ys);
         const yMax = Math.max(...ys);
         const halfW = Math.max(...xs);
-        const worldForWidth = halfW > 0 ? (r.w / 2 - pad) / halfW : Infinity;
+        let worldForWidth = halfW > 0 ? (r.w / 2 - pad) / halfW : Infinity;
+        // When filling, a world narrower than the frame is stretched to fit it, so every place is in the picture.
+        if (exportFrame.fill) worldForWidth = Math.max(worldForWidth, r.w);
         const worldForHeight = yMax > yMin ? (r.h - pad * 2) / (yMax - yMin) : Infinity;
         // Never zoom out so far that the world is smaller than the frame's height, nor in past zoom 6.
         let worldPx = Math.min(worldForWidth, worldForHeight, 256 * Math.pow(2, 6));
@@ -629,7 +714,11 @@ export function createMap(element, dotnet, options) {
     // Renders exactly what is inside the export frame to a width×height PNG and downloads it.
     async function exportPng(width, height, fileName) {
         const r = exportFrame?.rect ?? { ...visibleArea() };
-        const factor = width / r.w;
+        // The frame's contents are drawn at renderW × height, then stretched sideways to width × height
+        // ("fill space"; renderW = width otherwise). Markers and labels are drawn afterwards, unstretched.
+        const factor = height / r.h;
+        const renderW = Math.max(1, Math.min(width, Math.round(r.w * factor)));
+        const sx = width / renderW;
         const zoom = map.getZoom() + Math.log2(factor);
         const frameCenter = map.containerPointToLatLng([r.x + r.w / 2, r.y + r.h / 2]);
         // Horizontally the picture is always centred on the chosen longitude, so there's exactly one world.
@@ -638,19 +727,19 @@ export function createMap(element, dotnet, options) {
         const markerScale = factor * markerScaleAt(map.getZoom());
         const palette = PALETTES[theme] ?? PALETTES.light;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = palette.water;
-        ctx.fillRect(0, 0, width, height);
+        const baseCanvas = document.createElement('canvas');
+        baseCanvas.width = renderW;
+        baseCanvas.height = height;
+        const bctx = baseCanvas.getContext('2d');
+        bctx.fillStyle = palette.water;
+        bctx.fillRect(0, 0, renderW, height);
 
-        let project;
+        let baseProject;
         let warning = null;
         if (glLayer) {
-            const rendered = await renderBasemap(width, height, center, zoom, buildStyle(theme, settings));
-            ctx.drawImage(rendered.canvas, 0, 0, width, height);
-            project = rendered.project;
+            const rendered = await renderBasemap(renderW, height, center, zoom, buildStyle(theme, settings));
+            bctx.drawImage(rendered.canvas, 0, 0, renderW, height);
+            baseProject = rendered.project;
             rendered.dispose();
         } else {
             warning = 'This browser could not draw the map tiles, so the image only shows your places.';
@@ -664,23 +753,34 @@ export function createMap(element, dotnet, options) {
                 };
             };
             const c = toPx(center.lat, center.lng);
-            project = (lat, lng) => {
+            baseProject = (lat, lng) => {
                 const p = toPx(lat, lng);
-                return { x: p.x - c.x + width / 2, y: p.y - c.y + height / 2 };
+                return { x: p.x - c.x + renderW / 2, y: p.y - c.y + height / 2 };
             };
         }
 
         if (exportFrame) {
             // Cover the repeated copies of the world (and anything past the poles) with sea.
             const worldSize = 256 * Math.pow(2, zoom);
-            const left = width / 2 - worldSize / 2;
+            const left = renderW / 2 - worldSize / 2;
             const top = height / 2 - mercatorY(center.lat) * worldSize;
-            ctx.fillStyle = palette.water;
-            ctx.fillRect(0, 0, Math.max(0, left), height);
-            ctx.fillRect(left + worldSize, 0, Math.max(0, width - left - worldSize), height);
-            ctx.fillRect(0, 0, width, Math.max(0, top));
-            ctx.fillRect(0, top + worldSize, width, Math.max(0, height - top - worldSize));
+            bctx.fillStyle = palette.water;
+            bctx.fillRect(0, 0, Math.max(0, left), height);
+            bctx.fillRect(left + worldSize, 0, Math.max(0, renderW - left - worldSize), height);
+            bctx.fillRect(0, 0, renderW, Math.max(0, top));
+            bctx.fillRect(0, top + worldSize, renderW, Math.max(0, height - top - worldSize));
         }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(baseCanvas, 0, 0, width, height);
+        const project = (lat, lng) => {
+            const p = baseProject(lat, lng);
+            return { x: p.x * sx, y: p.y };
+        };
 
         const list = [...markers.values()].map(e => e.data)
             .sort((a, b) => Number(a.selected) - Number(b.selected));
@@ -804,6 +904,7 @@ export function createMap(element, dotnet, options) {
     return {
         getZoom: () => map.getZoom(),
         startExport,
+        setExportFill,
         setExportCenter,
         endExport,
         fitToFrame,
