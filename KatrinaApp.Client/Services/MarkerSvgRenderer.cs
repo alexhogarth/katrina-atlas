@@ -24,6 +24,8 @@ public static partial class MarkerSvgRenderer
     [GeneratedRegex("[^a-zA-Z0-9_-]")]
     private static partial Regex UnsafeIdChars();
 
+    public static bool IsHexColor(string? color) => color is not null && HexColor().IsMatch(color);
+
     public static string SanitizeColor(string? color) =>
         color is not null && HexColor().IsMatch(color) ? color.ToLowerInvariant() : MarkerStyle.DefaultColor;
 

@@ -41,7 +41,8 @@
     </div>
 
     <div class="atlas-field-label">Colour @if (CommonColor is null) { <span class="atlas-optional">mixed</span> }</div>
-    <ColorPicker Value="@CommonColor" OnPick="c => ApplyAsync(l => l.Style.Color = c)" />
+    <ColorSwatches Value="@CommonColor" Fallback="@MarkerSvgRenderer.SanitizeColor(Items[0].Style.Color)"
+                   OnPick="c => ApplyAsync(l => l.Style.Color = c)" />
 
     <div class="atlas-sliders">
         @Slider("Size", s => s.Size, (s, v) => s.Size = v, 6, 64, 1, v => $"{v:0}px")

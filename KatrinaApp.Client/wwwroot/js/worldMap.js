@@ -2,15 +2,22 @@
 // Requires the global `L` (wwwroot/lib/leaflet) and, for the vector basemap, `maplibregl` plus the
 // Leaflet bridge `L.maplibreGL` (wwwroot/lib/maplibre). Without WebGL it falls back to raster tiles.
 
-const THEMES = ['light', 'dark', 'emerald', 'navy', 'blue', 'midnight', 'sand'];
-// Themes with a pale basemap: markers get a soft outline (matches the .km-art rule in atlas.css).
+import { customColors, luminance, mix, rgba } from './atlas.js';
+
+const THEMES = ['light', 'dark', 'emerald', 'navy', 'blue', 'midnight', 'sand', 'custom'];
+// Themes with a pale basemap: markers get a soft outline (matches the .atlas-pale .km-art rule in atlas.css).
 const PALE_THEMES = new Set(['light', 'sand']);
+// How far out the map can zoom normally (1 ≈ a 5000 km scale bar). Framing an export allows zoom 0.
+const MIN_ZOOM = 1;
 const LABEL_POSITIONS = new Set(['right', 'left', 'above', 'below']);
-const DEFAULT_SETTINGS = { showBorders: true, showCountryNames: true, showCityNames: true, showPlaceLabels: true, markerZoom: null };
+const DEFAULT_SETTINGS = {
+    showBorders: true, showCountryNames: true, showCityNames: true, showPlaceLabels: true, markerZoom: null,
+    customSea: null, customLand: null,
+};
 // Limits for markers that scale with the map, so they never vanish or swamp the screen.
 const MIN_MARKER_SCALE = 0.05;
 const MAX_MARKER_SCALE = 8;
-// "Fill space" exports stretch the picture sideways by at most this much.
+// Exports can be stretched sideways ("fill space") by up to this much.
 const MAX_EXPORT_STRETCH = 2.5;
 
 // ---------- Vector basemap (OpenFreeMap / OpenMapTiles schema, no API key) ----------
@@ -58,8 +65,30 @@ const PALETTES = {
     },
 };
 
+// Basemap colours for the user's own sea / land colours, in the same shape as PALETTES entries.
+function customPalette(settings) {
+    const { sea, land } = customColors(settings?.customSea, settings?.customLand);
+    const darkLand = luminance(land) < 0.4;
+    const ink = darkLand ? '#ffffff' : '#000000';
+    return {
+        land, water: sea,
+        ice: mix(land, '#ffffff', 0.15), park: mix(land, ink, 0.04), building: mix(land, ink, 0.07),
+        road: mix(land, ink, 0.12), roadMinor: mix(land, ink, 0.07), border: mix(land, ink, 0.4), state: mix(land, ink, 0.18),
+        countryText: mix(land, ink, 0.65), cityText: mix(land, ink, 0.88), townText: mix(land, ink, 0.7),
+        halo: rgba(darkLand ? mix(land, '#000000', 0.45) : mix(land, '#ffffff', 0.6), 0.88),
+    };
+}
+
+function paletteFor(theme, settings) {
+    return theme === 'custom' ? customPalette(settings) : (PALETTES[theme] ?? PALETTES.light);
+}
+
+function isPale(theme, settings) {
+    return theme === 'custom' ? luminance(customPalette(settings).land) > 0.45 : PALE_THEMES.has(theme);
+}
+
 function buildStyle(theme, settings) {
-    const p = PALETTES[theme] ?? PALETTES.light;
+    const p = paletteFor(theme, settings);
     const show = on => (on ? 'visible' : 'none');
     const borders = show(settings.showBorders);
     const countries = show(settings.showCountryNames);
@@ -251,7 +280,7 @@ const tooltipOffset = m => [m.hx, m.hy - Math.max(m.hit, 8)];
 export function createMap(element, dotnet, options) {
     const map = L.map(element, {
         worldCopyJump: true,
-        minZoom: 2,
+        minZoom: MIN_ZOOM,
         maxZoom: 18,
         zoomSnap: 0.25,
         zoomDelta: 0.5,
@@ -291,13 +320,14 @@ export function createMap(element, dotnet, options) {
     function applyBasemap() {
         for (const t of THEMES) element.classList.toggle(`theme-${t}`, t === theme);
         element.classList.toggle('atlas-hide-labels', !settings.showPlaceLabels);
+        element.classList.toggle('atlas-pale', isPale(theme, settings));
 
         if (glLayer) {
             glLayer.getMaplibreMap().setStyle(buildStyle(theme, settings));
             return;
         }
 
-        const config = RASTER[theme];
+        const config = RASTER[theme] ?? (isPale(theme, settings) ? RASTER.light : RASTER.dark);
         const tileOptions = { maxNativeZoom: 16, maxZoom: 18 };
         if (raster?.theme !== theme) {
             raster?.base.remove();
@@ -319,11 +349,13 @@ export function createMap(element, dotnet, options) {
         if (next === theme) return;
         theme = next;
         applyBasemap();
+        updateWorldMask();
     }
 
     function setSettings(json) {
         settings = { ...DEFAULT_SETTINGS, ...JSON.parse(json) };
         applyBasemap();
+        updateWorldMask();
         applyMarkerScale();
     }
 
@@ -456,7 +488,11 @@ export function createMap(element, dotnet, options) {
     function obstruction() {
         const panel = options?.obstructionSelector ? document.querySelector(options.obstructionSelector) : null;
         if (!panel) return { right: 0, bottom: 0 };
+        // Measure the map as laid out, without the export's stretch preview.
+        const transform = element.style.transform;
+        element.style.transform = '';
         const m = element.getBoundingClientRect();
+        element.style.transform = transform;
         const p = panel.getBoundingClientRect();
         const overlapsX = p.left < m.right && p.right > m.left;
         const overlapsY = p.top < m.bottom && p.bottom > m.top;
@@ -482,6 +518,7 @@ export function createMap(element, dotnet, options) {
     if (glLayer) {
         for (const t of THEMES) element.classList.toggle(`theme-${t}`, t === theme);
         element.classList.toggle('atlas-hide-labels', !settings.showPlaceLabels);
+        element.classList.toggle('atlas-pale', isPale(theme, settings));
     } else {
         applyBasemap();
     }
@@ -567,25 +604,36 @@ export function createMap(element, dotnet, options) {
         updateFrameWidth();
     }
 
-    // With "fill space" on, the captured area is only as wide as one world, and the image is stretched sideways
-    // to the export's full width, so there's no empty sea at the sides.
-    function exportStretch() {
-        if (!exportFrame?.fill || !exportFrame.base) return 1;
-        const worldPx = 256 * Math.pow(2, map.getZoom());
-        return Math.min(MAX_EXPORT_STRETCH, Math.max(1, exportFrame.base.w / worldPx));
-    }
-
+    // "Fill space": the picture is stretched sideways by exportFrame.stretch. Only the middle 1/stretch of the frame
+    // is captured, then widened to the full size. While framing, the whole map is shown stretched the same way
+    // (markers are counter-scaled, as they are drawn unstretched), so the frame shows exactly the final image.
     function updateFrameWidth() {
         if (!exportFrame?.base) return;
         const base = exportFrame.base;
-        const w = Math.max(1, Math.floor(base.w / exportStretch()));
+        const w = Math.max(1, Math.floor(base.w / exportFrame.stretch));
         const r = { x: base.x + Math.round((base.w - w) / 2), y: base.y, w, h: base.h };
         exportFrame.rect = r;
         Object.assign(exportFrame.el.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
         const stretch = base.w / r.w;
-        exportFrame.badge.hidden = stretch < 1.01;
-        exportFrame.badge.textContent = `↔ stretched ${stretch.toFixed(2)}× to fill`;
+        exportFrame.badge.hidden = stretch < 1.005;
+        exportFrame.badge.textContent = `↔ stretched ${stretch.toFixed(2)}×`;
+        applyStretchPreview(stretch, r.x + r.w / 2);
         updateWorldMask();
+    }
+
+    function applyStretchPreview(stretch, originX) {
+        const on = stretch >= 1.005;
+        element.classList.toggle('atlas-stretched', on);
+        element.style.transform = on ? `scaleX(${stretch})` : '';
+        element.style.transformOrigin = on ? `${originX}px 50%` : '';
+        element.style.setProperty('--export-stretch', on ? String(stretch) : '1');
+    }
+
+    // The stretch at which one copy of the world exactly fills the frame's width at the current zoom.
+    function fillStretch() {
+        if (!exportFrame?.base) return 1;
+        const worldPx = 256 * Math.pow(2, map.getZoom());
+        return Math.min(MAX_EXPORT_STRETCH, Math.max(1, exportFrame.base.w / worldPx));
     }
 
     // The export shows one copy of the world, from centerLng - 180° to centerLng + 180°.
@@ -603,7 +651,7 @@ export function createMap(element, dotnet, options) {
         if (!exportFrame?.rect) return;
         const r = exportFrame.rect;
         const w = worldRectInContainer();
-        exportFrame.el.style.setProperty('--export-sea', (PALETTES[theme] ?? PALETTES.light).water);
+        exportFrame.el.style.setProperty('--export-sea', paletteFor(theme, settings).water);
         Object.assign(exportFrame.world.style, {
             left: `${w.x - r.x}px`, top: `${w.y - r.y}px`, width: `${w.w}px`, height: `${w.h}px`,
         });
@@ -624,7 +672,7 @@ export function createMap(element, dotnet, options) {
         snapTimer = setTimeout(() => snapToCenter(true), 80);
     };
 
-    function startExport(aspect, centerLng, fill) {
+    function startExport(aspect, centerLng, stretch) {
         if (!exportFrame) {
             const el = document.createElement('div');
             el.className = 'atlas-export-frame';
@@ -636,24 +684,27 @@ export function createMap(element, dotnet, options) {
             badge.hidden = true;
             el.appendChild(badge);
             element.appendChild(el);
-            exportFrame = { el, world, badge, aspect, centerLng: 0, fill: false };
+            exportFrame = { el, world, badge, aspect, centerLng: 0, stretch: 1 };
             // Let the map zoom out far enough to fit the whole world into a wide banner.
             map.setMinZoom(0);
             map.on('resize', layoutFrame);
-            map.on('move', updateWorldMask);
-            map.on('zoom zoomend', updateFrameWidth);
+            map.on('move zoom', updateWorldMask);
             map.on('moveend', onExportMoveEnd);
         }
         exportFrame.aspect = aspect;
         exportFrame.centerLng = normalizeLng(centerLng ?? 0);
-        exportFrame.fill = !!fill;
+        exportFrame.stretch = clampStretch(stretch);
         layoutFrame();
         snapToCenter(false);
     }
 
-    function setExportFill(fill) {
+    function clampStretch(s) {
+        return Number.isFinite(s) ? Math.min(MAX_EXPORT_STRETCH, Math.max(1, s)) : 1;
+    }
+
+    function setExportStretch(stretch) {
         if (!exportFrame) return;
-        exportFrame.fill = !!fill;
+        exportFrame.stretch = clampStretch(stretch);
         updateFrameWidth();
         snapToCenter(false);
     }
@@ -668,14 +719,14 @@ export function createMap(element, dotnet, options) {
     function endExport() {
         if (!exportFrame) return;
         map.off('resize', layoutFrame);
-        map.off('move', updateWorldMask);
-        map.off('zoom zoomend', updateFrameWidth);
+        map.off('move zoom', updateWorldMask);
         map.off('moveend', onExportMoveEnd);
         clearTimeout(snapTimer);
         exportFrame.el.remove();
         exportFrame = null;
-        map.setMinZoom(2);
-        if (map.getZoom() < 2) map.setZoom(2);
+        applyStretchPreview(1, 0);
+        map.setMinZoom(MIN_ZOOM);
+        if (map.getZoom() < MIN_ZOOM) map.setZoom(MIN_ZOOM);
     }
 
     // Fit every saved place inside the export frame.
@@ -683,7 +734,8 @@ export function createMap(element, dotnet, options) {
     function fitToFrame() {
         const points = [...markers.values()].map(e => e.marker.getLatLng());
         if (!exportFrame || points.length === 0) return;
-        const r = exportFrame.base;
+        // Places must fit in the captured part of the frame (narrower than the box when stretching).
+        const r = exportFrame.rect;
         const c = exportFrame.centerLng;
         const pad = Math.min(60, r.w * 0.06, r.h * 0.14);
 
@@ -693,9 +745,7 @@ export function createMap(element, dotnet, options) {
         const yMin = Math.min(...ys);
         const yMax = Math.max(...ys);
         const halfW = Math.max(...xs);
-        let worldForWidth = halfW > 0 ? (r.w / 2 - pad) / halfW : Infinity;
-        // When filling, a world narrower than the frame is stretched to fit it, so every place is in the picture.
-        if (exportFrame.fill) worldForWidth = Math.max(worldForWidth, r.w);
+        const worldForWidth = halfW > 0 ? (r.w / 2 - pad) / halfW : Infinity;
         const worldForHeight = yMax > yMin ? (r.h - pad * 2) / (yMax - yMin) : Infinity;
         // Never zoom out so far that the world is smaller than the frame's height, nor in past zoom 6.
         let worldPx = Math.min(worldForWidth, worldForHeight, 256 * Math.pow(2, 6));
@@ -725,7 +775,7 @@ export function createMap(element, dotnet, options) {
         const center = L.latLng(frameCenter.lat, exportFrame ? exportFrame.centerLng : frameCenter.lng);
         // Markers keep their on-screen proportions to the map, just at the export's resolution.
         const markerScale = factor * markerScaleAt(map.getZoom());
-        const palette = PALETTES[theme] ?? PALETTES.light;
+        const palette = paletteFor(theme, settings);
 
         const baseCanvas = document.createElement('canvas');
         baseCanvas.width = renderW;
@@ -826,7 +876,7 @@ export function createMap(element, dotnet, options) {
             }
             return '';
         });
-        if (PALE_THEMES.has(theme)) {
+        if (isPale(theme, settings)) {
             shadows.push(`drop-shadow(0 0 ${(0.6 * scale).toFixed(2)}px rgba(20,28,40,0.75))`);
             shadows.push(`drop-shadow(0 ${(1 * scale).toFixed(2)}px ${(2 * scale).toFixed(2)}px rgba(20,28,40,0.35))`);
         }
@@ -904,7 +954,8 @@ export function createMap(element, dotnet, options) {
     return {
         getZoom: () => map.getZoom(),
         startExport,
-        setExportFill,
+        setExportStretch,
+        fillStretch,
         setExportCenter,
         endExport,
         fitToFrame,

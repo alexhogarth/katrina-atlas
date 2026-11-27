@@ -137,22 +137,26 @@
         map is null ? 2.5 : await map.InvokeAsync<double>("getZoom");
 
     /// <summary>Shows the export frame (width / height = <paramref name="aspect"/>) over the map.</summary>
-    public async Task StartExportAsync(double aspect, double centerLongitude, bool fill)
+    public async Task StartExportAsync(double aspect, double centerLongitude, double stretch)
     {
         if (map is not null)
         {
-            await map.InvokeVoidAsync("startExport", aspect, centerLongitude, fill);
+            await map.InvokeVoidAsync("startExport", aspect, centerLongitude, stretch);
         }
     }
 
-    /// <summary>Turns "fill space" (stretch the picture sideways to fill the frame) on or off.</summary>
-    public async Task SetExportFillAsync(bool fill)
+    /// <summary>Sets how much the picture is stretched sideways (1-2.5); the map previews it live.</summary>
+    public async Task SetExportStretchAsync(double stretch)
     {
         if (map is not null)
         {
-            await map.InvokeVoidAsync("setExportFill", fill);
+            await map.InvokeVoidAsync("setExportStretch", stretch);
         }
     }
+
+    /// <summary>The stretch at which one world exactly fills the picture's width at the current zoom.</summary>
+    public async Task<double> GetFillStretchAsync() =>
+        map is null ? 1 : await map.InvokeAsync<double>("fillStretch");
 
     /// <summary>Changes the longitude kept in the middle of the export frame.</summary>
     public async Task SetExportCenterAsync(double longitude)

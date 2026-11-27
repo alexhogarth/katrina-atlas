@@ -27,8 +27,9 @@
                    Busy="exporting"
                    Message="@exportMessage"
                    CenterLongitude="mapSettings.ExportCenterLongitude"
-                   Fill="mapSettings.ExportFill"
-                   OnFillChanged="ChangeExportFillAsync"
+                   Stretch="mapSettings.ExportStretch"
+                   OnStretchChanged="ChangeExportStretchAsync"
+                   OnFillWidth="FitExportWidthAsync"
                    OnCenterChanged="ChangeExportCenterAsync"
                    OnPresetChanged="ChangeExportPresetAsync"
                    OnFit="FitExportAsync"
@@ -63,10 +64,37 @@
                 {
                     <button type="button" role="radio" aria-checked="@(theme == value)" title="@label" aria-label="@label"
                             class="@(theme == value ? "active" : null)" style="--sw-water: @water; --sw-land: @land"
-                            @onclick="() => SetThemeAsync(value)"></button>
+                            @onclick="() => ChoosePresetThemeAsync(value)"></button>
                 }
+                <button type="button" role="radio" aria-checked="@(theme == MapTheme.Custom)"
+                        title="Your own colours (colour wheel)" aria-label="Your own colours"
+                        class="atlas-theme-custom @(theme == MapTheme.Custom ? "active" : null)"
+                        style="--sw-water: @CustomSea; --sw-land: @CustomLand" @onclick="ChooseCustomThemeAsync"></button>
             </div>
         </header>
+
+        @if (bgEditorOpen && theme == MapTheme.Custom)
+        {
+            <section class="atlas-bg-editor" aria-label="Background colours">
+                <div class="atlas-bulk-head">
+                    <strong>Background colours</strong>
+                    <span class="flex-grow-1"></span>
+                    <button type="button" class="atlas-link-btn" @onclick="() => bgEditorOpen = false">Done</button>
+                </div>
+                <div class="atlas-segmented mb-2" role="tablist" aria-label="Which colour">
+                    <button type="button" role="tab" aria-selected="@(!editingLand)" class="@(!editingLand ? "active" : null)"
+                            @onclick="() => editingLand = false">
+                        <span class="atlas-color-dot" style="--swatch: @CustomSea"></span> Sea
+                    </button>
+                    <button type="button" role="tab" aria-selected="@editingLand" class="@(editingLand ? "active" : null)"
+                            @onclick="() => editingLand = true">
+                        <span class="atlas-color-dot" style="--swatch: @CustomLand"></span> Land
+                    </button>
+                </div>
+                <ColorPicker Value="@(editingLand ? CustomLand : CustomSea)" OnPick="SetCustomColorAsync" />
+                <p class="atlas-hint mb-0">Saved with this map. The panel colours follow the sea colour.</p>
+            </section>
+        }
 
         <div class="atlas-maps-row @(draft is not null ? "atlas-maps-row-disabled" : null)" inert="@(draft is not null)">
             <MapSwitcher Maps="maps"
@@ -182,6 +210,12 @@
     private bool exporting;
     private string? exportMessage;
     private string? mapMessage;
+    private bool bgEditorOpen;
+    private bool editingLand;
+
+    // Custom theme colours, defaulting to the Blue preset's.
+    private string CustomSea => MarkerSvgRenderer.IsHexColor(mapSettings.CustomSea) ? mapSettings.CustomSea! : "#0a2f4f";
+    private string CustomLand => MarkerSvgRenderer.IsHexColor(mapSettings.CustomLand) ? mapSettings.CustomLand! : "#1f5784";
 
     private bool SelectingAny => selectMode || picked.Count > 0;
 
@@ -233,7 +267,8 @@
         selectedId = null;
         picked.Clear();
         selectMode = false;
-        if (doc.Theme is { } t) await ApplyThemeAsync(t);
+        bgEditorOpen = false;
+        await ApplyThemeAsync(doc.Theme ?? theme);
         await Store.SaveCurrentMapIdAsync(info.Id);
         if (helpers is not null) await helpers.InvokeVoidAsync("setQueryParam", "map", info.Id.ToString("N"));
     }
@@ -423,8 +458,47 @@
         theme = value;
         if (helpers is not null)
         {
-            await helpers.InvokeVoidAsync("setTheme", WorldMap.ThemeKey(value));
+            await helpers.InvokeVoidAsync("setTheme", WorldMap.ThemeKey(value), CustomSea, CustomLand);
         }
+    }
+
+    private Task ChoosePresetThemeAsync(MapTheme value)
+    {
+        bgEditorOpen = false;
+        return SetThemeAsync(value);
+    }
+
+    private async Task ChooseCustomThemeAsync()
+    {
+        if (theme == MapTheme.Custom)
+        {
+            bgEditorOpen = !bgEditorOpen;
+            return;
+        }
+
+        if (mapSettings.CustomSea is null || mapSettings.CustomLand is null)
+        {
+            // Start from the theme in use, so the wheel begins somewhere familiar.
+            var current = Themes.FirstOrDefault(t => t.Value == theme);
+            var settings = mapSettings.Clone();
+            settings.CustomSea ??= current.Water ?? "#0a2f4f";
+            settings.CustomLand ??= current.Land ?? "#1f5784";
+            mapSettings = settings;
+        }
+        bgEditorOpen = true;
+        editingLand = false;
+        await SetThemeAsync(MapTheme.Custom);
+    }
+
+    private async Task SetCustomColorAsync(string hex)
+    {
+        var settings = mapSettings.Clone();
+        if (editingLand) settings.CustomLand = hex;
+        else settings.CustomSea = hex;
+        mapSettings = settings;
+        doc.Theme = MapTheme.Custom;
+        await ApplyThemeAsync(MapTheme.Custom);
+        await SaveDocAsync();
     }
 
     private void TogglePanel() => panelOpen = !panelOpen;
@@ -437,7 +511,7 @@
         StateHasChanged();
         if (map is not null)
         {
-            await map.StartExportAsync(exportPreset.Aspect, mapSettings.ExportCenterLongitude, mapSettings.ExportFill);
+            await map.StartExportAsync(exportPreset.Aspect, mapSettings.ExportCenterLongitude, mapSettings.ExportStretch);
             if (locations.Count > 0)
             {
                 await map.FitToExportFrameAsync();
@@ -451,7 +525,7 @@
         exportMessage = null;
         if (map is not null)
         {
-            await map.StartExportAsync(preset.Aspect, mapSettings.ExportCenterLongitude, mapSettings.ExportFill);
+            await map.StartExportAsync(preset.Aspect, mapSettings.ExportCenterLongitude, mapSettings.ExportStretch);
             if (locations.Count > 0)
             {
                 await map.FitToExportFrameAsync();
@@ -474,18 +548,22 @@
         }
     }
 
-    private async Task ChangeExportFillAsync(bool fill)
+    private async Task ChangeExportStretchAsync(double stretch)
     {
         var settings = mapSettings.Clone();
-        settings.ExportFill = fill;
+        settings.ExportStretch = Math.Round(Math.Clamp(stretch, 1, 2.5), 2);
         await SaveMapSettingsAsync(settings);
         if (map is not null)
         {
-            await map.SetExportFillAsync(fill);
-            if (locations.Count > 0)
-            {
-                await map.FitToExportFrameAsync();
-            }
+            await map.SetExportStretchAsync(settings.ExportStretch);
+        }
+    }
+
+    private async Task FitExportWidthAsync()
+    {
+        if (map is not null)
+        {
+            await ChangeExportStretchAsync(await map.GetFillStretchAsync());
         }
     }
 

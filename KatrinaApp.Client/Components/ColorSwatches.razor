@@ -1,0 +1,29 @@
+@* Simple colour choice for markers: the browser's colour picker plus quick swatches. *@
+
+<div class="atlas-colors">
+    <input type="color" class="atlas-color-input" title="Custom colour" aria-label="Custom colour"
+           value="@(Value ?? Fallback)" @oninput="InputAsync" />
+    @foreach (var swatch in Swatches)
+    {
+        <button type="button" class="atlas-swatch @(string.Equals(Value, swatch, StringComparison.OrdinalIgnoreCase) ? "active" : null)"
+                style="--swatch:@swatch" title="@swatch" aria-label="Colour @swatch"
+                @onclick="() => OnPick.InvokeAsync(swatch)"></button>
+    }
+</div>
+
+@code {
+    private static readonly string[] Swatches =
+    [
+        "#ffffff", "#b8ffe0", "#ffd76a", "#ff9f43", "#ff6b6b",
+        "#ff8fd8", "#b28dff", "#6bc5ff", "#2ecc71", "#1b1b1b",
+    ];
+
+    /// <summary>The current colour (#rrggbb), or null when several different colours are selected.</summary>
+    [Parameter] public string? Value { get; set; }
+    /// <summary>Shown in the colour picker when <see cref="Value"/> is null.</summary>
+    [Parameter] public string Fallback { get; set; } = MarkerStyle.DefaultColor;
+    [Parameter] public EventCallback<string> OnPick { get; set; }
+
+    private Task InputAsync(ChangeEventArgs e) =>
+        e.Value is string hex && ColorMath.TryParseHex(hex, out _) ? OnPick.InvokeAsync(hex.ToLowerInvariant()) : Task.CompletedTask;
+}

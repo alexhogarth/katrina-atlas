@@ -9,6 +9,8 @@ public enum MapTheme
     Blue,
     Midnight,
     Sand,
+    /// <summary>The user's own sea and land colours (<see cref="MapSettings.CustomSea"/>, <see cref="MapSettings.CustomLand"/>).</summary>
+    Custom,
 }
 
 public enum VisitKind
@@ -57,8 +59,15 @@ public sealed class MapSettings
     public double? MarkerZoom { get; set; }
     /// <summary>Longitude placed in the middle of exported images (0 = Greenwich, so the UK is central).</summary>
     public double ExportCenterLongitude { get; set; }
-    /// <summary>Stretch exported images sideways so the map fills wide formats (e.g. LinkedIn banners) without sea at the sides.</summary>
-    public bool ExportFill { get; set; }
+    /// <summary>
+    /// How much exported images are stretched sideways (1 = not at all, up to 2.5), so the map fills wide formats
+    /// such as LinkedIn banners instead of leaving sea at the sides. Markers and labels are never stretched.
+    /// </summary>
+    public double ExportStretch { get; set; } = 1;
+    /// <summary>Sea colour for the custom theme (#rrggbb); null until first chosen.</summary>
+    public string? CustomSea { get; set; }
+    /// <summary>Land colour for the custom theme (#rrggbb); null until first chosen.</summary>
+    public string? CustomLand { get; set; }
 
     public MapSettings Clone() => (MapSettings)MemberwiseClone();
 }

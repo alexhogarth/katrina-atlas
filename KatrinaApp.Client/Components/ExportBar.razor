@@ -28,11 +28,14 @@
             °E
         </label>
     }
-    <label class="atlas-export-fill" title="Stretch the map sideways so it fills wide images (like LinkedIn banners) instead of leaving sea at the sides">
-        <input type="checkbox" class="form-check-input m-0" checked="@Fill" disabled="@Busy"
-               @onchange="e => OnFillChanged.InvokeAsync(e.Value is true)" />
+    <label class="atlas-export-stretch" title="Stretch the map sideways so it fills wide images (like LinkedIn banners). Pins and labels keep their shape.">
         ↔ Fill space
+        <input type="range" min="1" max="2.5" step="0.05" disabled="@Busy" aria-label="Sideways stretch"
+               value="@Stretch.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)" @oninput="StretchInputAsync" />
+        <em>@Stretch.ToString("0.00")×</em>
     </label>
+    <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnFillWidth" disabled="@Busy"
+            title="Stretch just enough for the world to fill the picture's width at this zoom">Fit width</button>
     <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnFit" disabled="@Busy" title="Fit all your places into the frame">
         ⤢ Fit my places
     </button>
@@ -40,7 +43,7 @@
         @(Busy ? "Saving…" : "Download PNG")
     </button>
     <button type="button" class="btn btn-sm atlas-btn-ghost" @onclick="OnCancel" disabled="@Busy">Done</button>
-    <span class="atlas-export-hint">Zoom and drag up or down to frame the picture; it stays centred on the place you choose. Everything inside the dashed box is saved.@(Fill ? " With Fill space on, the box narrows to the width of the world and the picture is stretched sideways to the full size (pins keep their shape)." : "")</span>
+    <span class="atlas-export-hint">Zoom and drag up or down to frame the picture; it stays centred on the place you choose. Everything inside the dashed box is saved. Drag the Fill space slider to stretch the map sideways (1× = no stretch); what you see in the box is exactly what you'll get.</span>
     @if (!string.IsNullOrEmpty(Message))
     {
         <span class="atlas-export-error" role="alert">@Message</span>
@@ -85,8 +88,16 @@
 
     [Parameter] public double CenterLongitude { get; set; }
     [Parameter] public EventCallback<double> OnCenterChanged { get; set; }
-    [Parameter] public bool Fill { get; set; }
-    [Parameter] public EventCallback<bool> OnFillChanged { get; set; }
+    /// <summary>Sideways stretch, 1 to 2.5.</summary>
+    [Parameter] public double Stretch { get; set; } = 1;
+    [Parameter] public EventCallback<double> OnStretchChanged { get; set; }
+    [Parameter] public EventCallback OnFillWidth { get; set; }
+
+    private Task StretchInputAsync(ChangeEventArgs e) =>
+        double.TryParse(e.Value as string, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var s)
+            ? OnStretchChanged.InvokeAsync(s)
+            : Task.CompletedTask;
     [Parameter, EditorRequired] public ExportPreset Preset { get; set; } = default!;
     [Parameter] public bool Busy { get; set; }
     [Parameter] public string? Message { get; set; }

@@ -740,6 +740,16 @@ html, body {
     margin-bottom: 0.85rem;
 }
 
+.atlas-color-input {
+    width: 34px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--atlas-border);
+    border-radius: 8px;
+    background: none;
+    cursor: pointer;
+}
+
 .atlas-swatch {
     width: 24px;
     height: 24px;
@@ -860,8 +870,7 @@ html, body {
 }
 
 /* Glows are designed for dark maps; a soft outline keeps pale markers readable on the light basemap. */
-:root[data-theme="light"] .km-art,
-:root[data-theme="sand"] .km-art {
+.atlas-map.atlas-pale .km-art {
     filter: drop-shadow(0 0 0.6px rgba(20, 28, 40, 0.75)) drop-shadow(0 1px 2px rgba(20, 28, 40, 0.35));
 }
 
@@ -1507,10 +1516,56 @@ html, body {
 
 /* ---------- Export: fill space ---------- */
 
-.atlas-export-fill {
-    cursor: pointer;
+.atlas-export-stretch {
     color: var(--atlas-text) !important;
     font-weight: 600;
+}
+
+.atlas-export-stretch input[type="range"] {
+    width: 7rem;
+    accent-color: var(--atlas-accent);
+}
+
+.atlas-export-stretch em {
+    font-style: normal;
+    font-weight: 400;
+    color: var(--atlas-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 2.8rem;
+}
+
+/* Live preview of a stretched export: the whole map is widened (see worldMap.js), markers are narrowed back. */
+.atlas-map.atlas-stretched .km-inner {
+    transform: scaleX(calc(1 / var(--export-stretch, 1)));
+    transform-origin: var(--km-ax) var(--km-ay);
+}
+
+/* ---------- Custom background colours ---------- */
+
+.atlas-theme-switch button.atlas-theme-custom {
+    border: 2px solid transparent;
+    background:
+        linear-gradient(135deg, var(--sw-water) 50%, var(--sw-land) 50%) padding-box,
+        conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00) border-box;
+}
+
+.atlas-bg-editor {
+    margin: 0.75rem 1rem 0;
+    padding: 0.8rem;
+    border-radius: 14px;
+    border: 1px solid var(--atlas-accent);
+    background: var(--atlas-card);
+}
+
+.atlas-color-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    vertical-align: -1px;
+    margin-right: 0.25rem;
+    background: var(--swatch);
+    border: 1px solid rgba(128, 128, 128, 0.6);
 }
 
 .atlas-export-badge {

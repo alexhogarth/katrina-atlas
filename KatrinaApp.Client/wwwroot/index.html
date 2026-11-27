@@ -12,11 +12,19 @@
         (function () {
             try {
                 var t = localStorage.getItem('katrina-atlas.theme');
-                if (['light', 'dark', 'emerald', 'navy', 'blue', 'midnight', 'sand'].indexOf(t) < 0) {
+                if (['light', 'dark', 'emerald', 'navy', 'blue', 'midnight', 'sand', 'custom'].indexOf(t) < 0) {
                     t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 }
-                document.documentElement.dataset.theme = t;
-                document.documentElement.dataset.bsTheme = t === 'light' || t === 'sand' ? 'light' : 'dark';
+                var root = document.documentElement;
+                root.dataset.theme = t;
+                root.dataset.bsTheme = t === 'light' || t === 'sand' ? 'light' : 'dark';
+                if (t === 'custom') {
+                    var custom = JSON.parse(localStorage.getItem('katrina-atlas.custom-theme-vars') || 'null');
+                    if (custom) {
+                        root.dataset.bsTheme = custom.bs;
+                        for (var name in custom.vars) root.style.setProperty(name, custom.vars[name]);
+                    }
+                }
             } catch (e) { }
         })();
     </script>
